@@ -17,7 +17,7 @@ import androidx.compose.ui.window.PopupProperties
 import androidx.compose.ui.zIndex
 import com.soufianodev.lingallery.app.Strings
 import com.soufianodev.lingallery.app.AppConst
-import com.soufianodev.lingallery.ui.theme.AppIcons
+import com.soufianodev.lingallery.ui.icons.AppIcons
 import com.soufianodev.lingallery.ui.component.TooltipIconButton
 import com.soufianodev.lingallery.ui.theme.DarkPalette
 import com.soufianodev.lingallery.ui.theme.LightPalette

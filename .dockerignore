@@ -1,0 +1,14 @@
+.git
+.gradle
+.idea
+.kotlin
+build
+app/build
+app/src/main/jniLibs
+app/src/main/rust/target
+logs
+*.log
+*.iml
+*.class
+.DS_Store
+.opencode

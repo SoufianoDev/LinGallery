@@ -7,7 +7,9 @@ data class Album(
     val name: String,
     val images: List<ImageFile>,
     val previewPath: Path?,
-    val isPhoneAlbum: Boolean = false
+    val isDeviceAlbum: Boolean = false,
+    val statusText: String? = null,
+    val statusIsTransition: Boolean = false,
 ) {
     val imageCount: Int get() = images.size
 

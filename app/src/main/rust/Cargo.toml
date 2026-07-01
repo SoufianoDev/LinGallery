@@ -1,0 +1,37 @@
+[package]
+name = "lingallery-native"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+name = "lingallery_native"
+crate-type = ["cdylib"]
+
+[dependencies]
+jni = { version = "0.21", default-features = false }
+jwalk = "0.8"
+
+# MTP + FUSE stack
+mtp-rs = "0.21"
+fuser = "0.17"
+nusb = { version = "0.2", features = ["tokio"] }
+
+# Async runtime
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "time", "sync"] }
+futures = "0.3"
+
+# Utilities
+tempfile = "3"
+anyhow = "1"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+libc = "0.2"
+image = { version = "0.25", default-features = false, features = ["jpeg", "png", "webp", "bmp", "tiff"] }
+jpeg-decoder = "0.3"
+
+# Memory allocator
+tikv-jemallocator = "0.7"
+tikv-jemalloc-ctl = { version = "0.7", features = ["stats"] }
+tikv-jemalloc-sys = { version = "0.7", features = ["disable_initial_exec_tls"] }

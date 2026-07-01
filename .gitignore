@@ -17,3 +17,18 @@ captures
 !*.xcworkspace/contents.xcworkspacedata
 **/xcshareddata/WorkspaceSettings.xcsettings
 
+# Rust native library build artifacts
+app/src/main/jniLibs/
+app/src/main/rust/target/
+
+# Fork's additional .gitignore entries
+*.log
+*.apk
+*.class
+.opencode/
+/logs/
+*.o
+*.obj
+Thumbs.db
+app/src/main/kotlin/com/soufianodev/lingallery/app/CrashDialogTest.kt
+

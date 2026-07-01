@@ -21,30 +21,29 @@ import androidx.compose.ui.geometry.Offset
 import androidx.compose.ui.geometry.Rect
 import androidx.compose.ui.geometry.Size
 import androidx.compose.ui.graphics.*
+import androidx.compose.ui.graphics.drawscope.drawIntoCanvas
 import androidx.compose.ui.graphics.drawscope.Stroke
-import androidx.compose.ui.graphics.painter.Painter
+import androidx.compose.ui.graphics.skiaCanvas
 import androidx.compose.ui.input.pointer.PointerEventPass
 import androidx.compose.ui.input.pointer.PointerEventType
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.unit.dp
-import com.github.panpf.sketch.Image
-import com.github.panpf.sketch.SingletonSketch
-import com.github.panpf.sketch.asPainter
-import com.github.panpf.sketch.request.ImageRequest
-import com.github.panpf.sketch.request.ImageResult
-import com.github.panpf.sketch.PlatformContext
-import com.github.panpf.sketch.request.Disposable
-import com.soufianodev.lingallery.model.ImageFile
-import com.soufianodev.lingallery.app.Strings
 import com.soufianodev.lingallery.app.AppConst
+import com.soufianodev.lingallery.app.Strings
+import com.soufianodev.lingallery.model.ImageFile
+import com.soufianodev.lingallery.native.MemoryManager
+import com.soufianodev.lingallery.native.NativeImagePipeline
+import com.soufianodev.lingallery.native.OwnedSkiaImage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
-import kotlinx.coroutines.awaitCancellation
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.awaitCancellation
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.math.pow
 import java.nio.file.Path
+import org.jetbrains.skia.Rect as SkiaRect
+import org.jetbrains.skia.SamplingMode
 
 data class DisplayCrop(
     val rect: Rect
@@ -66,77 +65,81 @@ fun ImageDisplay(
     currentIndex: Int = 0,
     modifier: Modifier = Modifier
 ) {
-    var painter by remember { mutableStateOf<Painter?>(null) }
+    var currentImage by remember { mutableStateOf<OwnedSkiaImage?>(null) }
     var loadError by remember { mutableStateOf(false) }
-    var imageWidth by remember { mutableIntStateOf(0) }
-    var imageHeight by remember { mutableIntStateOf(0) }
-    var prevPainter by remember { mutableStateOf<Painter?>(null) }
-    var prevWidth by remember { mutableIntStateOf(0) }
-    var prevHeight by remember { mutableIntStateOf(0) }
+    var viewportWidth by remember { mutableIntStateOf(0) }
+    var viewportHeight by remember { mutableIntStateOf(0) }
+    val memoryPressure by MemoryManager.pressureLevel.collectAsState()
 
-    var loadGeneration by remember { mutableIntStateOf(0) }
+    var lastDecodePath by remember { mutableStateOf<Path?>(null) }
+    var lastDecodeBucket by remember { mutableFloatStateOf(0f) }
+    var lastImageLastModified by remember { mutableLongStateOf(0L) }
 
-    LaunchedEffect(path, imageLastModified) {
-        if (path != null) {
-            val generation = ++loadGeneration
-            loadError = false
-            withContext(Dispatchers.IO) {
-                try {
-                    val uri = path.toUri().toString() + "?t=$imageLastModified"
-                    val result = SingletonSketch.get(PlatformContext.INSTANCE).execute(
-                        ImageRequest.Builder(PlatformContext.INSTANCE, uri).build()
-                    )
-                    if (!isActive || generation != loadGeneration) return@withContext
-                    if (result is ImageResult.Success) {
-                        val sketchImage: Image = result.image
-                        withContext(Dispatchers.Main) {
-                            if (generation == loadGeneration) {
-                                prevPainter = painter
-                                prevWidth = imageWidth
-                                prevHeight = imageHeight
-                                painter = sketchImage.asPainter()
-                                imageWidth = result.imageInfo.width
-                                imageHeight = result.imageInfo.height
-                                loadError = false
-                            }
-                        }
-                    }
-                } catch (_: CancellationException) {
-                } catch (_: Exception) {
-                    withContext(Dispatchers.Main) {
-                        if (generation == loadGeneration) {
-                            loadError = true
-                        }
-                    }
-                }
-            }
-        } else {
-            painter = null
-            imageWidth = 0
-            imageHeight = 0
+    LaunchedEffect(memoryPressure) {
+        if (memoryPressure >= MemoryManager.PressureLevel.CRITICAL) {
+            NativeImagePipeline.trim()
+            MemoryManager.requestSkiaCleanup()
         }
     }
 
-    LaunchedEffect(path, currentIndex) {
-        if (path != null) {
-            val disposables = mutableListOf<Disposable>()
-            listOf(currentIndex - 1, currentIndex + 1).forEach { idx ->
-                if (idx in images.indices) {
-                    val preload = images[idx]
-                    val preloadUri = preload.path.toUri().toString()
-                    if (preloadUri != path.toUri().toString()) {
-                        disposables.add(
-                            SingletonSketch.get(PlatformContext.INSTANCE).enqueue(
-                                ImageRequest.Builder(PlatformContext.INSTANCE, preloadUri).build()
-                            )
-                        )
-                    }
-                }
+    var latestRequestId by remember { mutableLongStateOf(0L) }
+    val decodeBucket = remember(scale) { NativeImagePipeline.decodeBucket(scale) }
+
+    DisposableEffect(Unit) {
+        onDispose {
+            currentImage?.close()
+            currentImage = null
+            MemoryManager.requestSkiaCleanup()
+        }
+    }
+
+    LaunchedEffect(path, imageLastModified, viewportWidth, viewportHeight, decodeBucket) {
+        if (path == lastDecodePath && decodeBucket <= lastDecodeBucket
+            && imageLastModified == lastImageLastModified
+            && currentImage != null && !currentImage!!.isClosed) {
+            return@LaunchedEffect
+        }
+        lastDecodePath = path
+        lastDecodeBucket = decodeBucket
+        lastImageLastModified = imageLastModified
+
+        val requestId = NativeImagePipeline.nextRequestId()
+        latestRequestId = requestId
+        NativeImagePipeline.cancelAllExcept(requestId)
+        loadError = false
+
+        if (path == null || viewportWidth <= 0 || viewportHeight <= 0) {
+            return@LaunchedEffect
+        }
+
+        try {
+            val owned = withContext(Dispatchers.IO) {
+                NativeImagePipeline.decodeViewer(
+                    requestId = requestId,
+                    path = path,
+                    lastModified = imageLastModified,
+                    viewportWidthPx = viewportWidth,
+                    viewportHeightPx = viewportHeight,
+                    zoomScale = scale,
+                )?.toOwnedImage()
             }
-            try {
-                awaitCancellation()
-            } finally {
-                disposables.forEach { it.dispose() }
+            if (!isActive || latestRequestId != requestId) {
+                owned?.close()
+                return@LaunchedEffect
+            }
+            if (owned != null) {
+                currentImage?.close()
+                currentImage = owned
+                MemoryManager.requestSkiaCleanup()
+                loadError = false
+            } else {
+                loadError = true
+            }
+        } catch (_: CancellationException) {
+            NativeImagePipeline.cancel(requestId)
+        } catch (_: Exception) {
+            if (latestRequestId == requestId) {
+                loadError = true
             }
         }
     }
@@ -144,6 +147,10 @@ fun ImageDisplay(
     Box(
         modifier = modifier
             .fillMaxSize()
+            .onSizeChanged {
+                viewportWidth = it.width
+                viewportHeight = it.height
+            }
             .background(MaterialTheme.colorScheme.background),
         contentAlignment = Alignment.Center
     ) {
@@ -155,26 +162,9 @@ fun ImageDisplay(
                     style = MaterialTheme.typography.bodyLarge
                 )
             }
-            painter != null -> {
+            currentImage != null -> {
                 ImageDisplayContent(
-                    painter = painter!!,
-                    imageWidth = imageWidth.toFloat(),
-                    imageHeight = imageHeight.toFloat(),
-                    scale = scale,
-                    panX = panX,
-                    panY = panY,
-                    isCropping = isCropping,
-                    cropRect = cropRect,
-                    onScaleChange = onScaleChange,
-                    onPanChange = onPanChange,
-                    onCropRectChange = onCropRectChange,
-                )
-            }
-            prevPainter != null -> {
-                ImageDisplayContent(
-                    painter = prevPainter!!,
-                    imageWidth = prevWidth.toFloat(),
-                    imageHeight = prevHeight.toFloat(),
+                    image = currentImage!!,
                     scale = scale,
                     panX = panX,
                     panY = panY,
@@ -191,9 +181,7 @@ fun ImageDisplay(
 
 @Composable
 private fun ImageDisplayContent(
-    painter: Painter,
-    imageWidth: Float,
-    imageHeight: Float,
+    image: OwnedSkiaImage,
     scale: Float,
     panX: Float,
     panY: Float,
@@ -203,6 +191,8 @@ private fun ImageDisplayContent(
     onPanChange: (Float, Float) -> Unit,
     onCropRectChange: (DisplayCrop?) -> Unit
 ) {
+    val imageWidth = image.sourceWidth.toFloat()
+    val imageHeight = image.sourceHeight.toFloat()
     var currentScale by remember { mutableFloatStateOf(scale) }
     var currentPanX by remember { mutableFloatStateOf(panX) }
     var currentPanY by remember { mutableFloatStateOf(panY) }
@@ -340,11 +330,17 @@ private fun ImageDisplayContent(
         val imageRect = Rect(imgX, imgY, imgX + imgW, imgY + imgH)
 
         Canvas(modifier = Modifier.fillMaxSize()) {
-            drawContext.transform.apply {
-                translate(imgX, imgY)
-            }
-            with(painter) {
-                draw(size = Size(imgW, imgH))
+            if (!image.isClosed) {
+                drawIntoCanvas { canvas ->
+                    canvas.skiaCanvas.drawImageRect(
+                        image.skiaImage,
+                        SkiaRect(0f, 0f, image.decodedWidth.toFloat(), image.decodedHeight.toFloat()),
+                        SkiaRect(imgX, imgY, imgX + imgW, imgY + imgH),
+                        SamplingMode.LINEAR,
+                        null,
+                        true
+                    )
+                }
             }
         }
 

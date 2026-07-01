@@ -1,9 +1,9 @@
 package com.soufianodev.lingallery.gallery
 
 import com.soufianodev.lingallery.app.AppConst
+import com.soufianodev.lingallery.devices.core.DeviceActivityMap
 import com.soufianodev.lingallery.model.Album
 import com.soufianodev.lingallery.model.ImageFile
-import com.soufianodev.lingallery.model.PhoneScanProgress
 import com.soufianodev.lingallery.shared.filesystem.normalizePath
 import java.nio.file.Files
 import java.nio.file.Path
@@ -41,7 +41,7 @@ data class GalleryUiState(
     val isSlideshowActive: Boolean = false,
     val isDarkTheme: Boolean = true,
     val deletionRecord: DeletionRecord? = null,
-    val phoneScanProgress: Map<String, PhoneScanProgress> = emptyMap(),
+    val deviceActivity: DeviceActivityMap = DeviceActivityMap(),
     val pendingPhoneSort: Set<Path> = emptySet(),
 ) {
     val currentAlbum: Album?
@@ -53,15 +53,15 @@ data class GalleryUiState(
 
     private val PRIORITY_NAMES = listOf("desktop", "camera", "pictures", "downloads", "screenshots")
 
-    private fun sortKey(name: String, isPhone: Boolean = false): Pair<Int, String> {
-        if (isPhone) return Pair(-1, "")
+    private fun sortKey(name: String, isDevice: Boolean = false): Pair<Int, String> {
+        if (isDevice) return Pair(-1, "")
         val idx = PRIORITY_NAMES.indexOf(name.lowercase())
         return if (idx >= 0) Pair(idx, "") else Pair(PRIORITY_NAMES.size, name.lowercase())
     }
 
     private fun albumCompare(a: Album, b: Album): Int {
-        val (pa, sa) = sortKey(a.name, a.isPhoneAlbum)
-        val (pb, sb) = sortKey(b.name, b.isPhoneAlbum)
+        val (pa, sa) = sortKey(a.name, a.isDeviceAlbum)
+        val (pb, sb) = sortKey(b.name, b.isDeviceAlbum)
         return pa.compareTo(pb).let { if (it != 0) it else sa.compareTo(sb) }
     }
 
@@ -77,7 +77,7 @@ data class GalleryUiState(
     }
 
     fun pruneEmptyAlbums(): GalleryUiState {
-        val nonEmpty = albums.filter { it.images.isNotEmpty() || it.isPhoneAlbum }
+        val nonEmpty = albums.filter { it.images.isNotEmpty() || it.isDeviceAlbum }
         if (nonEmpty.size == albums.size) return this
         val newIndex = currentAlbumIndex.coerceIn(0, nonEmpty.size - 1)
         return copy(albums = nonEmpty, currentAlbumIndex = newIndex)
@@ -210,12 +210,15 @@ data class GalleryUiState(
         )
     }
 
-    fun updatePhoneScanProgress(phoneId: String, progress: PhoneScanProgress): GalleryUiState {
-        return copy(phoneScanProgress = phoneScanProgress + (phoneId to progress))
-    }
-
-    fun removePhoneScanProgress(phoneId: String): GalleryUiState {
-        return copy(phoneScanProgress = phoneScanProgress - phoneId)
+    fun removeAlbumsByPrefix(prefix: Path): GalleryUiState {
+        val filtered = albums.filterNot { it.path.startsWith(prefix) }
+        if (filtered.size == albums.size) return this
+        val newIndex = currentAlbumIndex.coerceIn(0, filtered.size - 1)
+        val newScreen = if (screen is Screen.Viewer) {
+            val albumPath = albums.getOrNull(currentAlbumIndex)?.path
+            if (albumPath != null && albumPath.startsWith(prefix)) Screen.Gallery else screen
+        } else screen
+        return copy(albums = filtered, currentAlbumIndex = newIndex, screen = newScreen)
     }
 
     fun markPendingPhoneSort(albumPath: Path): GalleryUiState =
@@ -241,7 +244,7 @@ data class GalleryUiState(
         val idx = albums.indexOfFirst { it.path == albumPath }
         if (idx < 0) return this
         val album = albums[idx]
-        if (!album.isPhoneAlbum) return this
+        if (!album.isDeviceAlbum) return this
         val sorted = album.images
             .sortedByDescending { it.lastModified }
             .distinctBy { it.path }

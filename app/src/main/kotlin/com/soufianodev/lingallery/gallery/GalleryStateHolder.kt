@@ -8,9 +8,12 @@ import com.soufianodev.lingallery.model.Album
 import com.soufianodev.lingallery.model.ImageFile
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.channels.Channel
+import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
+import kotlinx.coroutines.flow.receiveAsFlow
 import kotlinx.coroutines.flow.update
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.withContext
@@ -19,6 +22,10 @@ import java.nio.file.Path
 import java.nio.file.Paths
 import java.nio.file.attribute.BasicFileAttributes
 import kotlin.io.path.extension
+
+sealed interface ScrollEffect {
+    data object ScrollToTop : ScrollEffect
+}
 
 sealed interface GalleryAction {
     data class SelectAlbum(val index: Int) : GalleryAction
@@ -35,6 +42,13 @@ class GalleryStateHolder(
 
     private val _uiState = MutableStateFlow(GalleryUiState())
     val uiState: StateFlow<GalleryUiState> = _uiState.asStateFlow()
+
+    private val _scrollEffects = Channel<ScrollEffect>(Channel.BUFFERED)
+    val scrollEffects: Flow<ScrollEffect> = _scrollEffects.receiveAsFlow()
+
+    fun requestScrollToTop() {
+        _scrollEffects.trySend(ScrollEffect.ScrollToTop)
+    }
 
     fun onAction(action: GalleryAction) {
         when (action) {
@@ -96,9 +110,14 @@ class GalleryStateHolder(
                         _statusMessage.value = Strings.Status.progress(event.scannedDirs, event.totalImages)
                     }
                     is ScanEvent.ScanComplete -> {
-                        updateState { it.sortAlbums().pruneEmptyAlbums().copy(isScanning = false) }
+                        updateState {
+                            it.sortAlbums().pruneEmptyAlbums().copy(
+                                isScanning = false,
+                                totalImagesScanned = event.totalImages
+                            )
+                        }
                         val s = _uiState.value
-                        _statusMessage.value = Strings.Status.summary(s.albums.size, s.totalImagesScanned)
+                        _statusMessage.value = Strings.Status.summary(s.albums.size, event.totalImages)
                         withContext(Dispatchers.IO) { repository.saveState(_uiState.value) }
                     }
                 }

@@ -23,4 +23,11 @@ object AppConst {
     const val THEME_LIGHT = "light"
     val PHONE_THUMBNAIL_DIR: Path get() =
         Path.of(System.getProperty("user.home"), ".cache", "lingallery", "phone-thumbnails")
+
+    const val MTP_POLL_INTERVAL_MS = 2000L
+    const val MTP_PROBE_RETRIES = 3
+    const val MTP_PROBE_BACKOFF_MS = 2000L
+    const val MTP_BUFFERED_MODE_DEFAULT = true
+    const val NATIVE_TEMP_DIR_PREFIX = "lingallery_native_"
+    const val DISCONNECT_TIMEOUT_MS = 10_000L
 }

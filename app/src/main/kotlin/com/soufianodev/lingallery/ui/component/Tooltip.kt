@@ -14,6 +14,7 @@ import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.*
 import androidx.compose.ui.window.*
 import kotlinx.coroutines.delay
+import kotlin.math.max
 
 private class TooltipPositionProvider(
     private val gapPx: Int,
@@ -25,17 +26,26 @@ private class TooltipPositionProvider(
         layoutDirection: LayoutDirection,
         popupContentSize: IntSize
     ): IntOffset {
-        return if (preferAbove) {
-            IntOffset(
-                anchorBounds.left + (anchorBounds.width - popupContentSize.width) / 2,
-                anchorBounds.top - popupContentSize.height - gapPx
-            )
-        } else {
-            IntOffset(
-                anchorBounds.left + (anchorBounds.width - popupContentSize.width) / 2,
-                anchorBounds.bottom + gapPx
-            )
+        val anchorCenterX = anchorBounds.left + anchorBounds.width / 2
+        var x = anchorCenterX - popupContentSize.width / 2
+        x = x.coerceIn(0, max(0, windowSize.width - popupContentSize.width))
+
+        val spaceAbove = anchorBounds.top
+        val spaceBelow = windowSize.height - anchorBounds.bottom
+        val showAbove = when {
+            preferAbove && spaceAbove >= popupContentSize.height + gapPx -> true
+            !preferAbove && spaceBelow >= popupContentSize.height + gapPx -> false
+            spaceAbove >= spaceBelow -> true
+            else -> false
         }
+
+        val y = if (showAbove) {
+            anchorBounds.top - popupContentSize.height - gapPx
+        } else {
+            anchorBounds.bottom + gapPx
+        }.coerceIn(0, max(0, windowSize.height - popupContentSize.height))
+
+        return IntOffset(x, y)
     }
 }
 
@@ -53,50 +63,42 @@ fun TooltipIconButton(
     preferTooltipAbove: Boolean = true
 ) {
     val interactionSource = remember { MutableInteractionSource() }
-    val isHovered by interactionSource.collectIsHoveredAsState()
-    var showTooltip by remember { mutableStateOf(false) }
-    var tooltipHovered by remember { mutableStateOf(false) }
+    val tooltipState = rememberTooltipState(interactionSource, showDelayMs, hideDelayMs)
+    val gapPx = with(LocalDensity.current) { 8.dp.roundToPx() }
 
-    LaunchedEffect(isHovered) {
-        if (isHovered) {
-            delay(showDelayMs)
-            showTooltip = true
-        } else {
-            delay(hideDelayMs)
-            showTooltip = false
-        }
-    }
-
-    Box {
+    Box(modifier = modifier.size(buttonSize)) {
         IconButton(
             onClick = onClick,
             enabled = enabled,
-            interactionSource = interactionSource,
-            modifier = modifier.size(buttonSize)
+            modifier = Modifier
+                .matchParentSize()
+                .stablePointerHoverIcon(PointerIcon.Hand),
+            interactionSource = interactionSource
         ) {
-            Icon(imageVector = icon, contentDescription = tooltip, tint = tint)
+            val iconTint = if (enabled) tint else tint.copy(alpha = 0.38f)
+            Icon(imageVector = icon, contentDescription = tooltip, tint = iconTint)
         }
 
-        if (showTooltip && tooltip.isNotEmpty()) {
+        if (tooltipState == TooltipDisplayState.SHOWN) {
             Popup(
-                popupPositionProvider = TooltipPositionProvider(
-                    gapPx = with(LocalDensity.current) { 4.dp.toPx().toInt() },
-                    preferAbove = preferTooltipAbove
-                ),
+                popupPositionProvider = TooltipPositionProvider(gapPx, preferTooltipAbove),
                 onDismissRequest = {},
-                properties = PopupProperties(focusable = false)
+                properties = PopupProperties(
+                    focusable = false,
+                    dismissOnBackPress = false,
+                    dismissOnClickOutside = false
+                )
             ) {
                 Surface(
-                    shape = RoundedCornerShape(6.dp),
-                    color = MaterialTheme.colorScheme.inverseSurface,
-                    tonalElevation = 8.dp,
+                    shape = RoundedCornerShape(4.dp),
+                    color = Color(0xFF333333),
                     shadowElevation = 4.dp
                 ) {
                     Text(
                         text = tooltip,
-                        color = MaterialTheme.colorScheme.inverseOnSurface,
-                        style = MaterialTheme.typography.labelSmall,
-                        modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                        color = Color.White,
+                        fontSize = 12.sp,
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 5.dp)
                     )
                 }
             }

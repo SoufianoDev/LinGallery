@@ -1,8 +1,16 @@
 package com.soufianodev.lingallery.app
 
+import com.soufianodev.lingallery.devices.DeviceConnectionStateHolder
+import com.soufianodev.lingallery.devices.core.DeviceDisplayNameResolver
+import com.soufianodev.lingallery.native.LinLogger
+import com.soufianodev.lingallery.devices.ui.DeviceActivityPresenter
+import com.soufianodev.lingallery.devices.ui.DeviceIssuePresenter
+import com.soufianodev.lingallery.devices.usb.mtp.MtpProtocol
 import com.soufianodev.lingallery.gallery.GalleryRepository
 import com.soufianodev.lingallery.gallery.GalleryStateHolder
-import com.soufianodev.lingallery.phone.PhoneManager
+import com.soufianodev.lingallery.native.MemoryManager
+import com.soufianodev.lingallery.native.NativeLibLoader
+import com.soufianodev.lingallery.native.mtp.NativeMtpBridge
 
 import com.soufianodev.lingallery.shared.desktop.WindowBounds
 import kotlinx.coroutines.Dispatchers
@@ -18,7 +26,8 @@ import java.nio.file.Paths
 
 class AppModule(
     private val scope: CoroutineScope,
-    val awtWindow: java.awt.Window
+    val awtWindow: java.awt.Window,
+    val onNativeLibFailed: () -> Unit = {},
 ) {
     private val scanRoots: List<Path> = AppConst.DEFAULT_SCAN_ROOTS.map {
         Paths.get(it.replace("~", System.getProperty("user.home")))
@@ -39,55 +48,41 @@ class AppModule(
 
     private var savedWindowBounds: WindowBounds? = null
 
-    private val phoneNames = mutableMapOf<String, String>()
+    val displayNameResolver = DeviceDisplayNameResolver()
 
-    val phoneManager = PhoneManager(
+    val mtpProtocol = MtpProtocol(
         scope = scope,
-        onPhoneAlbumAdded = { album ->
-            phoneNames[album.path.toString()] = album.name
-            galleryStateHolder.updateState { it.addAlbum(album).markPendingPhoneSort(album.path) }
-        },
-        onPhoneImagesFound = { mountPath, images ->
-            galleryStateHolder.updateState { it.appendPhoneImages(mountPath, images) }
-        },
-        onPhoneAlbumRemoved = { phoneId, path ->
-            val wasCurrent = galleryStateHolder.uiState.value.currentAlbum?.path == path
-            galleryStateHolder.updateState {
-                val state = it.removeAlbum(path).removePhoneScanProgress(phoneId)
-                if (wasCurrent) state.copy(currentAlbumIndex = 0)
-                else state
-            }
-            val friendlyName = phoneNames.remove(path.toString()) ?: path.fileName.toString()
-            galleryStateHolder.setStatus(Strings.Status.phoneDisconnected(friendlyName))
-        },
-        onScanProgress = { phoneId, progress ->
-            galleryStateHolder.updateState { it.updatePhoneScanProgress(phoneId, progress) }
-        },
-        onMetadataBatch = { mountPath, phoneId, batch ->
-            if (batch.isNotEmpty()) {
-                galleryStateHolder.updateState { it.updatePhoneImageMetadata(mountPath, batch) }
-            } else {
-                val friendlyName = phoneNames[mountPath.toString()] ?: mountPath.fileName.toString()
-                val imageCount = galleryStateHolder.uiState.value.albums
-                    .firstOrNull { it.path == mountPath }?.images?.size ?: 0
-                galleryStateHolder.setStatus(Strings.Status.phoneConnected(friendlyName, imageCount))
-                galleryStateHolder.updateState { it.removePhoneScanProgress(phoneId) }
-                val currentPath = galleryStateHolder.uiState.value.currentAlbum?.path
-                if (currentPath == mountPath) {
-                    galleryStateHolder.updateState { it.markPendingPhoneSort(mountPath) }
-                } else {
-                    galleryStateHolder.updateState { it.sortPhoneByRecent(mountPath) }
-                }
-            }
-        },
-        onThumbnailUpdated = { mountPath, imagePath, thumbPath ->
-            galleryStateHolder.updateState { it.updatePhoneImageThumbnail(mountPath, imagePath, thumbPath) }
-        }
+        galleryStateHolder = galleryStateHolder,
+        displayNameResolver = displayNameResolver,
+    )
+
+    val issuePresenter = DeviceIssuePresenter(
+        strings = Strings.DeviceIssue,
+        deviceRepository = mtpProtocol,
+    )
+
+    val activityPresenter = DeviceActivityPresenter(
+        strings = Strings.DeviceActivity,
+    )
+
+    val deviceConnectionStateHolder = DeviceConnectionStateHolder(
+        scope = scope,
+        deviceRepository = mtpProtocol,
+        issuePresenter = issuePresenter,
     )
 
     fun init() {
+        LinLogger.init(minLevel = LinLogger.Level.DEBUG, nativeMinLevel = LinLogger.Level.DEBUG)
         galleryStateHolder.init(scope)
-        phoneManager.start()
+        NativeLibLoader.load()
+        if (NativeLibLoader.isAvailable) {
+            LinLogger.setFileLogging(true)
+            MemoryManager.startMonitoring(scope)
+            NativeMtpBridge.init()
+            mtpProtocol.start()
+        } else {
+            onNativeLibFailed()
+        }
     }
 
     fun toggleFullscreen(isFullscreen: Boolean) {
@@ -138,6 +133,8 @@ class AppModule(
     }
 
     fun cleanup() {
+        MemoryManager.stopMonitoring()
+        mtpProtocol.stop()
         galleryRepository.stopWatcher()
         galleryRepository.close()
     }

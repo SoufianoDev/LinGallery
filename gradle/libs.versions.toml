@@ -9,6 +9,7 @@ metadataExtractor = "2.18.0"
 scrimage = "4.3.5"
 sqliteJdbc = "3.49.1.0"
 filekit = "0.14.2"
+json = "20231013"
 
 [libraries]
 kotlin-test = { module = "org.jetbrains.kotlin:kotlin-test", version.ref = "kotlin" }
@@ -30,6 +31,7 @@ scrimage-extra = { module = "com.sksamuel.scrimage:scrimage-formats-extra", vers
 sqlite-jdbc = { module = "org.xerial:sqlite-jdbc", version.ref = "sqliteJdbc" }
 filekit-core = { module = "io.github.vinceglb:filekit-core", version.ref = "filekit" }
 filekit-dialogs = { module = "io.github.vinceglb:filekit-dialogs-compose", version.ref = "filekit" }
+json = { module = "org.json:json", version.ref = "json" }
 
 [plugins]
 composeMultiplatform = { id = "org.jetbrains.compose", version.ref = "composeMultiplatform" }

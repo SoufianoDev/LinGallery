@@ -1,5 +1,6 @@
 package com.soufianodev.lingallery.gallery.data
 
+import com.soufianodev.lingallery.native.LinLogger
 import kotlinx.coroutines.*
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.flow.*
@@ -26,6 +27,7 @@ class FileWatcher(
         ".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tiff", ".tif", ".svg"
     ),
     private val debounceMs: Long = 300L,
+    private val pollIntervalMs: Long = 5000L,
 ) {
     private var watchService: WatchService? = null
     private var job: Job? = null
@@ -37,6 +39,9 @@ class FileWatcher(
     fun start(scope: CoroutineScope) {
         watchService = FileSystems.getDefault().newWatchService()
         job = scope.launch(Dispatchers.IO) {
+            val pollJob = launch {
+                pollLoop()
+            }
             while (isActive) {
                 try {
                     initializeWatches()
@@ -44,16 +49,41 @@ class FileWatcher(
                 } catch (e: CancellationException) {
                     throw e
                 } catch (e: Exception) {
-                    println("[FileWatcher] Event loop crashed: ${e.message}. Restarting in 1s...")
-                    e.printStackTrace()
+                    LinLogger.e("FileWatcher", "Event loop crashed: ${e.message}. Restarting in 1s...")
                     delay(1000)
                     try { watchService?.close() } catch (_: Exception) {}
                     watchService = FileSystems.getDefault().newWatchService()
                     watchedDirs.clear()
                 }
             }
+            pollJob.cancel()
         }
     }
+
+    private suspend fun pollLoop() {
+        while (currentCoroutineContext().isActive) {
+            delay(pollIntervalMs)
+            for (root in roots) {
+                if (!Files.isDirectory(root)) continue
+                val current = snapshotDir(root)
+                val previous = lastSnapshot[root]
+                if (previous != null && previous != current) {
+                    _events.send(FileEvent.AlbumModified(root))
+                }
+                lastSnapshot[root] = current
+            }
+        }
+    }
+
+    private fun snapshotDir(dir: Path): Set<String> {
+        return try {
+            Files.list(dir).use { stream ->
+                stream.toList().map { it.fileName.toString() }.toSet()
+            }
+        } catch (_: Exception) { emptySet() }
+    }
+
+    private val lastSnapshot = java.util.concurrent.ConcurrentHashMap<Path, Set<String>>()
 
     private fun initializeWatches() {
         for (root in roots) {
@@ -107,9 +137,8 @@ class FileWatcher(
                 break
             } catch (_: InterruptedException) {
                 break
-            } catch (e: Exception) {
-                println("[FileWatcher] Iteration error: ${e.message}. Re-raising for restart...")
-                e.printStackTrace()
+                } catch (e: Exception) {
+                LinLogger.e("FileWatcher", "Iteration error: ${e.message}. Re-raising for restart...")
                 throw e
             }
         }

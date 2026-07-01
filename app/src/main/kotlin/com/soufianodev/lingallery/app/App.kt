@@ -9,6 +9,9 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.unit.dp
+import com.soufianodev.lingallery.devices.core.DeviceUiEffect
+import com.soufianodev.lingallery.devices.ui.DialogActionKind
+import com.soufianodev.lingallery.devices.ui.DeviceIssueDialog
 import com.soufianodev.lingallery.gallery.GalleryScreen
 import com.soufianodev.lingallery.gallery.Screen
 import com.soufianodev.lingallery.gallery.readImageFileInfo
@@ -36,6 +39,9 @@ fun App(module: AppModule) {
     var screen by remember { mutableStateOf<Screen>(Screen.Gallery) }
     val galleryState by module.galleryStateHolder.uiState.collectAsState()
     val viewerState by module.viewerStateHolder.uiState.collectAsState()
+    val deviceMounts by remember { derivedStateOf { module.mtpProtocol.mountedRoots.toSet() } }
+    val deviceActivity by module.mtpProtocol.deviceActivities.collectAsState()
+    val currentEffect by module.deviceConnectionStateHolder.currentEffect.collectAsState()
 
     val snackbarHostState = remember { SnackbarHostState() }
     var snackbarIsError by remember { mutableStateOf(false) }
@@ -141,18 +147,21 @@ fun App(module: AppModule) {
     }
 
     Box(modifier = Modifier.fillMaxSize()) {
-        when (val current = screen) {
-            is Screen.Gallery -> GalleryScreen(
-                stateHolder = module.galleryStateHolder,
-                onImageSelected = { index ->
-                    val images = galleryState.currentAlbumImages
-                    if (index in images.indices) {
-                        module.viewerStateHolder.enter(images, index)
-                        screen = Screen.Viewer(index)
-                    }
+        GalleryScreen(
+            stateHolder = module.galleryStateHolder,
+            deviceMounts = deviceMounts,
+            deviceActivity = deviceActivity,
+            activityPresenter = module.activityPresenter,
+            onImageSelected = { index ->
+                val images = galleryState.currentAlbumImages
+                if (index in images.indices) {
+                    module.viewerStateHolder.enter(images, index)
+                    screen = Screen.Viewer(index)
                 }
-            )
-            is Screen.Viewer -> ViewerScreen(
+            }
+        )
+        if (screen is Screen.Viewer) {
+            ViewerScreen(
                 stateHolder = module.viewerStateHolder,
                 onBack = {
                     module.viewerStateHolder.stopSlideshow()
@@ -170,6 +179,35 @@ fun App(module: AppModule) {
                 onCopyFile = { launchDirectoryPicker("copy") },
                 onRestoreFromTrash = { cb -> module.undoDelete(cb) }
             )
+        }
+
+        when (val effect = currentEffect) {
+            is DeviceUiEffect.Dialog -> DeviceIssueDialog(
+                displayData = effect.displayData,
+                onPrimary = {
+                    when (effect.displayData.primaryAction.kind) {
+                        DialogActionKind.RETRY  -> module.deviceConnectionStateHolder.establish()
+                        DialogActionKind.CANCEL -> module.deviceConnectionStateHolder.cancel()
+                        DialogActionKind.DISMISS -> module.deviceConnectionStateHolder.dismiss()
+                    }
+                },
+                onSecondary = effect.displayData.secondaryAction?.let { action ->
+                    { when (action.kind) {
+                        DialogActionKind.RETRY  -> module.deviceConnectionStateHolder.establish()
+                        DialogActionKind.CANCEL -> {
+                            module.deviceConnectionStateHolder.cancel()
+                            showSnackbar(Strings.DeviceIssue.reconnectGuidance)
+                        }
+                        DialogActionKind.DISMISS -> module.deviceConnectionStateHolder.dismiss()
+                    }}
+                },
+            )
+            is DeviceUiEffect.Snackbar -> {
+                LaunchedEffect(effect) {
+                    showErrorSnackbar(effect.message)
+                }
+            }
+            null -> { }
         }
 
         Box(

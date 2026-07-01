@@ -12,7 +12,7 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.soufianodev.lingallery.app.Strings
-import com.soufianodev.lingallery.ui.theme.AppIcons
+import com.soufianodev.lingallery.ui.icons.AppIcons
 import com.soufianodev.lingallery.ui.component.TooltipIconButton
 
 @Composable

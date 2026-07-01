@@ -124,7 +124,7 @@ class GalleryIndex(private val dbPath: Path = defaultDbPath()) {
                 "INSERT OR REPLACE INTO images (path, album_path, name, extension, size, last_modified) VALUES (?, ?, ?, ?, ?, ?)"
             )
             val now = System.currentTimeMillis()
-            for ((index, album) in state.albums.filter { !it.isPhoneAlbum }.withIndex()) {
+            for ((index, album) in state.albums.filter { !it.isDeviceAlbum }.withIndex()) {
                 albumStmt.setString(1, album.path.toString())
                 albumStmt.setString(2, album.name)
                 albumStmt.setLong(3, now)

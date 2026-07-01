@@ -2,27 +2,20 @@
 
 A desktop image gallery and viewer for Linux. It scans your photo folders, organizes images into albums, and gives you a full-screen viewer with editing tools.
 
-> **Project status:** Under active development. First release coming soon.
-
-## License
-
-LinGallery is free software released under the GNU General Public License v3.0 (GPL-3.0). This means you are free to run the program for any purpose, study how it works, change it to do what you want, and share copies with others. If you distribute modified versions, you must also release your changes under the same license. There is no warranty -- the program is provided as-is.
-
-The full license text is in the [LICENSE](LICENSE) file.
+> In development. First release coming soon.
 
 ## Table of Contents
 
 - [What is LinGallery?](#what-is-lingallery)
 - [What it can do](#what-it-can-do)
 - [How to use it](#how-to-use-it)
-- [Common problems](#common-problems)
 - [For developers](#for-developers)
 - [License](#license)
 - [Getting help](#getting-help)
 
 ## What is LinGallery?
 
-LinGallery is a program that runs on your Linux desktop. It looks through your Pictures, Downloads, and Desktop folders, finds all images, and shows them to you in a clean gallery view. You can open any image in a full-screen viewer, zoom in, rotate it, crop it, or run a slideshow. Changes to your folders appear automatically.
+LinGallery is an application for your Linux desktop. It scans your Pictures, Downloads, and Desktop folders for images and displays them as a grid of thumbnails. Click any thumbnail to open the full-screen viewer, where you can zoom, rotate, crop, or run a slideshow. New images appear automatically as you add them to your folders.
 
 ## What it can do
 
@@ -32,17 +25,17 @@ LinGallery is a program that runs on your Linux desktop. It looks through your P
 - Rotate images left and right
 - Flip images horizontally
 - Crop images (overwrite the original or save a copy)
-- View image details and camera settings (EXIF data)
+- View image details and camera settings (shutter speed, aperture, date taken, etc.)
 - Rename, move, or copy images between folders
 - Delete images (moves them to your system Trash with Undo)
-- Connect Android phones via USB — MTP albums appear automatically (GVfs)
+- Connect Android phones via USB. They show up as albums automatically.
 - Run a slideshow
-- Watch your folders for changes -- new images appear without restarting
+- Watch your folders for changes. New images appear without restarting.
 - Dark and light themes
 
 ## How to use it
 
-Double-click a thumbnail to open an image. Use arrow keys (or A/D) to navigate. Scroll to zoom. The top toolbar has zoom controls (-, 100%, +) -- click the percentage to reset to fit-to-screen. The bottom toolbar has buttons for all editing operations.
+Double-click a thumbnail to open an image. Use arrow keys (or A/D) to navigate. Scroll to zoom. The top toolbar has zoom controls (-, 100%, +). Click the percentage to reset to fit-to-screen. The bottom toolbar has buttons for all editing operations.
 
 **Keyboard shortcuts**
 
@@ -60,7 +53,6 @@ Double-click a thumbnail to open an image. Use arrow keys (or A/D) to navigate. 
 | I | Show image info |
 | Delete | Delete current image |
 | Esc | Back to gallery / cancel crop |
-
 
 ## For developers
 

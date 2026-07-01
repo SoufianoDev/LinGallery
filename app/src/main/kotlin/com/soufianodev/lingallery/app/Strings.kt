@@ -138,6 +138,48 @@ object Strings {
         val warning get() = Strings["contentdesc.warning"]
     }
 
+    object StatusMtp {
+        val connecting get() = Strings["status.mtp.connecting"]
+        val connected get() = Strings["status.mtp.connected"]
+        val disconnecting get() = Strings["status.mtp.disconnecting"]
+        val disconnected get() = Strings["status.mtp.disconnected"]
+        val browsing get() = Strings["status.mtp.browsing"]
+        val indexing get() = Strings["status.mtp.indexing"]
+        val error get() = Strings["status.mtp.error"]
+        val timeout get() = Strings["status.mtp.timeout"]
+        val scanning get() = Strings["status.mtp.scanning"]
+        val scanningDone get() = Strings["status.mtp.scanning.done"]
+    }
+
+    object Device {
+        val androidPhone get() = Strings["device.android.phone"]
+    }
+
+    object DeviceIssue {
+        fun permissionTitle(name: String) = Strings.fmt("device.issue.permission.title", name)
+        val permissionMessage get() = Strings["device.issue.permission.message"]
+        fun permissionSteps() = Strings["device.issue.permission.steps"].split("|")
+        fun permissionNotes() = Strings["device.issue.permission.notes"].split("|")
+        fun deviceBusy(name: String) = Strings.fmt("device.issue.busy", name)
+        fun unsupportedTitle(name: String) = Strings.fmt("device.issue.unsupported.title", name)
+        fun unsupportedMessage(name: String) = Strings.fmt("device.issue.unsupported.message", name)
+        val unknownTitle get() = Strings["device.issue.unknown.title"]
+        fun unknownMessage(detail: String) = Strings.fmt("device.issue.unknown.message", detail)
+        val retry get() = Strings["device.issue.retry"]
+        val cancel get() = Strings["button.cancel"]
+        val close get() = Strings["button.close"]
+        val dismiss get() = Strings["device.issue.dismiss"]
+        val learnMore get() = Strings["device.issue.learn.more"]
+        val reconnectGuidance get() = Strings["device.issue.reconnect.guidance"]
+    }
+
+    object DeviceActivity {
+        fun connecting(name: String) = Strings.fmt("device.activity.connecting", name)
+        fun mounting(name: String) = Strings.fmt("device.activity.mounting", name)
+        fun scanning(name: String, count: Int) = Strings.fmt("device.activity.scanning", name, count)
+        fun indexing(name: String, count: Int) = Strings.fmt("device.activity.indexing", name, count)
+    }
+
     object Exif {
         val fileSize get() = Strings["exif.file.size"]
         val modified get() = Strings["exif.modified"]

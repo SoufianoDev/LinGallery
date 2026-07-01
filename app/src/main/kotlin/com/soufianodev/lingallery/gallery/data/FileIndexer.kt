@@ -3,6 +3,8 @@ package com.soufianodev.lingallery.gallery.data
 import com.soufianodev.lingallery.app.AppConst
 import com.soufianodev.lingallery.model.Album
 import com.soufianodev.lingallery.model.ImageFile
+import com.soufianodev.lingallery.native.LinLogger
+import com.soufianodev.lingallery.native.NativeScanner
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.async
 import kotlinx.coroutines.awaitAll
@@ -68,6 +70,23 @@ class FileIndexer(
         roots: List<Path>,
         currentAlbumPath: Path? = null
     ): Flow<ScanEvent> = flow {
+        if (NativeScanner.isAvailable) {
+            LinLogger.i("FileIndexer", "NativeScanner available, delegating scan")
+            val nativeResult = runCatching { NativeScanner.scanToAlbums(roots) }
+            if (nativeResult.isSuccess) {
+                val albums = nativeResult.getOrThrow()
+                var total = 0
+                for (album in albums) {
+                    total += album.images.size
+                    emit(ScanEvent.AlbumFound(album))
+                }
+                emit(ScanEvent.ScanComplete(total))
+                return@flow
+            } else {
+                LinLogger.w("FileIndexer", "NativeScanner failed: ${nativeResult.exceptionOrNull()?.message}. Falling back to Kotlin BFS")
+            }
+        }
+
         val dirQueue = LinkedList<Path>()
         for (root in roots) {
             if (Files.exists(root)) {
@@ -85,8 +104,8 @@ class FileIndexer(
         while (dirQueue.isNotEmpty() && currentCoroutineContext().isActive) {
             val dir = dirQueue.removeFirst()
             if (!Files.isDirectory(dir) || !visited.add(dir)) continue
-            val name = dir.fileName.toString()
-            if (name.startsWith(".") || name == "lost+found") continue
+            val name = dir.fileName.toString().lowercase()
+            if (name.startsWith(".") || name == "lost+found" || name == "android" || name == "music" || name == "movies" || name == "documents") continue
 
             val albumImages = mutableListOf<ImageFile>()
             val subdirs = mutableListOf<Path>()
@@ -94,8 +113,8 @@ class FileIndexer(
             try {
                 Files.list(dir).forEach { entry ->
                     if (Files.isDirectory(entry)) {
-                        val en = entry.fileName.toString()
-                        if (!en.startsWith(".") && en != "lost+found") {
+                        val en = entry.fileName.toString().lowercase()
+                        if (!en.startsWith(".") && en != "lost+found" && en != "android" && en != "music" && en != "movies" && en != "documents") {
                             subdirs.add(entry)
                         }
                     } else {

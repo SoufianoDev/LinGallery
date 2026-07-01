@@ -6,6 +6,8 @@ import com.soufianodev.lingallery.app.AppConst
 import com.soufianodev.lingallery.gallery.CropRect
 import com.soufianodev.lingallery.gallery.GalleryRepository
 import com.soufianodev.lingallery.model.ImageFile
+import com.soufianodev.lingallery.native.MemoryManager
+import com.soufianodev.lingallery.native.NativeImagePipeline
 import com.soufianodev.lingallery.shared.desktop.copyImageToClipboard
 import com.soufianodev.lingallery.shared.desktop.copyToClipboard
 import com.soufianodev.lingallery.shared.filesystem.uniqueDestination
@@ -50,6 +52,7 @@ class ViewerStateHolder(
     private val onImageRemovedFromAlbum: (albumPath: Path, imagePath: Path) -> Unit = { _, _ -> },
     private val onImageAddedToAlbum: (albumPath: Path, imagePath: Path) -> Unit = { _, _ -> }
 ) {
+    private val slideshowController = SlideshowController(onAdvance = { navigateImage(1) })
     private val _uiState = MutableStateFlow(ViewerUiState())
     val uiState: StateFlow<ViewerUiState> = _uiState.asStateFlow()
 
@@ -134,6 +137,8 @@ class ViewerStateHolder(
         val images = s.images.toMutableList().also { it[idx] = info }
         _uiState.value = s.copy(images = images)
         SingletonSketch.get(PlatformContext.INSTANCE).memoryCache.clear()
+        NativeImagePipeline.trim()
+        MemoryManager.requestSkiaCleanup()
         org.jetbrains.skia.Graphics.purgeResourceCache()
     }
 
@@ -141,7 +146,10 @@ class ViewerStateHolder(
         val image = _uiState.value.currentImage ?: return
         scope.launch {
             val ok = withContext(Dispatchers.IO) { ImageEditor.rotate(image.path, degrees) }
-            if (ok) refreshCurrentImage()
+            if (ok) {
+                refreshCurrentImage()
+                resetView()
+            }
             onResult(ok)
         }
     }
@@ -150,7 +158,10 @@ class ViewerStateHolder(
         val image = _uiState.value.currentImage ?: return
         scope.launch {
             val ok = withContext(Dispatchers.IO) { ImageEditor.flipHorizontal(image.path) }
-            if (ok) refreshCurrentImage()
+            if (ok) {
+                refreshCurrentImage()
+                resetView()
+            }
             onResult(ok)
         }
     }
@@ -164,8 +175,15 @@ class ViewerStateHolder(
             val ok = withContext(Dispatchers.IO) {
                 ImageEditor.crop(image.path, rect.x, rect.y, rect.width, rect.height)
             }
-            _uiState.value = _uiState.value.copy(isCropping = false, cropRect = null)
-            if (ok) refreshCurrentImage()
+            if (ok) {
+                refreshCurrentImage()
+                _uiState.value = _uiState.value.copy(
+                    isCropping = false, cropRect = null,
+                    scale = 1f, panX = 0f, panY = 0f
+                )
+            } else {
+                _uiState.value = _uiState.value.copy(isCropping = false, cropRect = null)
+            }
             onResult(ok)
         }
     }
@@ -175,10 +193,13 @@ class ViewerStateHolder(
     }
 
     fun toggleSlideshow() {
-        _uiState.value = _uiState.value.copy(slideshowActive = !_uiState.value.slideshowActive)
+        val active = !_uiState.value.slideshowActive
+        if (active) slideshowController.start() else slideshowController.stop()
+        _uiState.value = _uiState.value.copy(slideshowActive = active)
     }
 
     fun stopSlideshow() {
+        slideshowController.stop()
         _uiState.value = _uiState.value.copy(slideshowActive = false)
     }
 
@@ -301,10 +322,8 @@ class ViewerStateHolder(
                     )
                 }
                 val currentImages = _uiState.value.images
-                val newImages = (currentImages + newImage)
-                    .distinctBy { it.path }
-                    .sortedByDescending { it.lastModified }
-                val newIndex = newImages.indexOfFirst { it.path == newImage.path }
+                val newIndex = currentImages.size
+                val newImages = currentImages + newImage
                 _uiState.value = _uiState.value.copy(
                     isCropping = false, cropRect = null,
                     images = newImages, currentIndex = newIndex,

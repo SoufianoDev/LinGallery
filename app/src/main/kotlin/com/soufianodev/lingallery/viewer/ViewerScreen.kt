@@ -22,6 +22,7 @@ import androidx.compose.ui.input.key.*
 import androidx.compose.ui.input.pointer.PointerIcon
 import androidx.compose.ui.input.pointer.pointerHoverIcon
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.soufianodev.lingallery.app.AppConst
@@ -30,7 +31,7 @@ import com.soufianodev.lingallery.gallery.CropRect
 import com.soufianodev.lingallery.ui.component.TooltipIconButton
 import com.soufianodev.lingallery.ui.component.stablePointerHoverIcon
 import androidx.compose.ui.graphics.graphicsLayer
-import com.soufianodev.lingallery.ui.theme.AppIcons
+import com.soufianodev.lingallery.ui.icons.AppIcons
 import com.soufianodev.lingallery.ui.theme.DarkPalette
 import com.soufianodev.lingallery.ui.theme.LightPalette
 import kotlinx.coroutines.delay
@@ -79,16 +80,6 @@ fun ViewerScreen(
     LaunchedEffect(anyDialogOpen, state.isFullscreen) {
         if (!anyDialogOpen) {
             focusRequester.requestFocus()
-        }
-    }
-
-    LaunchedEffect(state.slideshowActive) {
-        if (state.slideshowActive) {
-            while (true) {
-                delay(AppConst.SLIDESHOW_DEFAULT_INTERVAL_MS)
-                if (!state.slideshowActive) break
-                stateHolder.navigateImage(1)
-            }
         }
     }
 
@@ -570,10 +561,14 @@ fun ViewerScreen(
                             imageVector = AppIcons.Delete,
                             contentDescription = Strings.ContentDesc.delete,
                             modifier = Modifier.size(64.dp).align(Alignment.CenterHorizontally),
-                            tint = DarkPalette.ERROR
+                            tint = DarkPalette.ON_SURFACE_VARIANT
                         )
                         Spacer(Modifier.height(16.dp))
-                        Text(Strings.Dialogs.deleteConfirm(currentImage?.name ?: ""))
+                        Text(
+                            Strings.Dialogs.deleteConfirm(currentImage?.name ?: ""),
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
                         Spacer(Modifier.height(8.dp))
                         Row(verticalAlignment = Alignment.CenterVertically) {
                             Checkbox(
@@ -610,7 +605,11 @@ fun ViewerScreen(
                             tint = DarkPalette.ERROR
                         )
                         Spacer(Modifier.height(16.dp))
-                        Text(Strings.Dialogs.permanentDeleteWarning(currentImage?.name ?: ""))
+                        Text(
+                            Strings.Dialogs.permanentDeleteWarning(currentImage?.name ?: ""),
+                            maxLines = 2,
+                            overflow = TextOverflow.Ellipsis,
+                        )
                     }
                 },
                 confirmButton = {

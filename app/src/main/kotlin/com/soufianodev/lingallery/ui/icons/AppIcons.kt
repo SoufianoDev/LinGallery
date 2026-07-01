@@ -1,4 +1,4 @@
-package com.soufianodev.lingallery.ui.theme
+package com.soufianodev.lingallery.ui.icons
 
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.automirrored.filled.ArrowBack
@@ -38,7 +38,8 @@ object AppIcons {
     val Sort = Icons.AutoMirrored.Filled.Sort
     val GridView = Icons.Filled.GridView
     val Refresh = Icons.Filled.Refresh
-    val Smartphone = Icons.Filled.Smartphone
+    val Smartphone = Mobile
+    val MobileBlock = com.soufianodev.lingallery.ui.icons.MobileBlock
     val Transfer = Icons.AutoMirrored.Filled.DriveFileMove
     val Warning = Icons.Filled.Warning
 }

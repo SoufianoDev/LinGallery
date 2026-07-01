@@ -1,7 +1,9 @@
 package com.soufianodev.lingallery.gallery
 
 import androidx.compose.animation.*
+import androidx.compose.animation.core.tween
 import androidx.compose.foundation.background
+import androidx.compose.foundation.lazy.grid.rememberLazyGridState
 import androidx.compose.foundation.layout.*
 import androidx.compose.material3.*
 import androidx.compose.runtime.*
@@ -10,16 +12,24 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.animation.core.tween
 import com.github.panpf.sketch.PlatformContext
 import com.github.panpf.sketch.SingletonSketch
 import com.soufianodev.lingallery.app.AppConst
 import com.soufianodev.lingallery.app.Strings
+import com.soufianodev.lingallery.devices.core.DeviceActivityMap
+import com.soufianodev.lingallery.devices.ui.DeviceActivityPresenter
 import com.soufianodev.lingallery.ui.theme.DarkPalette
 import com.soufianodev.lingallery.ui.theme.LightPalette
+import java.nio.file.Path
 
 @Composable
 fun GalleryScreen(
     stateHolder: GalleryStateHolder,
+    deviceMounts: Set<Path> = emptySet(),
+    deviceActivity: DeviceActivityMap = DeviceActivityMap(),
+    activityPresenter: DeviceActivityPresenter,
     onImageSelected: (Int) -> Unit
 ) {
     val state by stateHolder.uiState.collectAsState()
@@ -32,15 +42,19 @@ fun GalleryScreen(
     val outlineVariant = if (isDark) DarkPalette.OUTLINE_VARIANT else LightPalette.OUTLINE_VARIANT
 
     val statusMessage by stateHolder.statusMessage.collectAsState()
+    val badges = remember(deviceActivity) { activityPresenter.toSidebarBadges(deviceActivity) }
+    val statusBarActivityText = remember(deviceActivity) { activityPresenter.toStatusBarText(deviceActivity) }
+    val displayText = statusBarActivityText ?: statusMessage.ifEmpty { "Ready" }
 
     Column(modifier = Modifier.fillMaxSize().background(bg)) {
         Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
             AlbumSidebar(
                 albums = state.albums,
                 currentAlbumIndex = state.currentAlbumIndex,
+                badges = badges,
                 onAlbumSelected = { index ->
                     val prevAlbum = state.albums.getOrNull(state.currentAlbumIndex)
-                    if (prevAlbum?.isPhoneAlbum == true) {
+                    if (prevAlbum?.isDeviceAlbum == true) {
                         if (prevAlbum.path in state.pendingPhoneSort) {
                             stateHolder.updateState { it.sortPhoneByRecent(prevAlbum.path) }
                         }
@@ -50,7 +64,7 @@ fun GalleryScreen(
                     stateHolder.onAction(GalleryAction.SelectAlbum(index))
                 },
                 isDark = isDark,
-                phoneScanProgress = state.phoneScanProgress
+                deviceMounts = deviceMounts,
             )
 
             Box(
@@ -101,19 +115,32 @@ fun GalleryScreen(
                 Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
                     val currentAlbum = state.currentAlbum
                     val showScanning = state.isScanning
-                        && (currentAlbum == null || (currentAlbum.images.isEmpty() && !currentAlbum.isPhoneAlbum))
+                        && (currentAlbum == null || (currentAlbum.images.isEmpty() && !currentAlbum.isDeviceAlbum))
                     if (showScanning) {
                         Box(Modifier.fillMaxSize(), contentAlignment = Alignment.Center) {
                             Text(Strings.Status.scanningShort, color = onSurfaceVariant, fontSize = 15.sp)
                         }
                     } else {
-                        GalleryGrid(
-                            images = state.currentAlbumImages,
-                            onImageClicked = { index -> onImageSelected(index) },
-                            onImageDoubleClicked = { index -> onImageSelected(index) },
-                            isDark = isDark,
-                            hasAlbums = state.albums.isNotEmpty()
-                        )
+                        key(state.currentAlbum?.path) {
+                            val gridState = rememberLazyGridState()
+
+                            LaunchedEffect(state.currentAlbum?.path) {
+                                stateHolder.scrollEffects.collect {
+                                    when (it) {
+                                        is ScrollEffect.ScrollToTop -> gridState.scrollToItem(0)
+                                    }
+                                }
+                            }
+
+                            GalleryGrid(
+                                images = state.currentAlbumImages,
+                                gridState = gridState,
+                                onImageClicked = { index -> onImageSelected(index) },
+                                onImageDoubleClicked = { index -> onImageSelected(index) },
+                                isDark = isDark,
+                                hasAlbums = state.albums.isNotEmpty()
+                            )
+                        }
                     }
                 }
             }
@@ -123,14 +150,30 @@ fun GalleryScreen(
             modifier = Modifier.fillMaxWidth().height(32.dp),
             color = surface.copy(alpha = 0.95f)
         ) {
-            Box(
+            Row(
                 modifier = Modifier.fillMaxSize().padding(horizontal = 16.dp),
-                contentAlignment = Alignment.CenterStart
+                verticalAlignment = Alignment.CenterVertically
             ) {
+                AnimatedVisibility(
+                    visible = statusBarActivityText != null,
+                    enter = fadeIn(tween(200)) + expandHorizontally(tween(200)),
+                    exit = fadeOut(tween(150)) + shrinkHorizontally(tween(150)),
+                ) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(14.dp),
+                            strokeWidth = 2.dp,
+                            color = onSurfaceVariant,
+                        )
+                        Spacer(Modifier.width(8.dp))
+                    }
+                }
                 Text(
-                    text = statusMessage.ifEmpty { "Ready" },
+                    text = displayText,
                     fontSize = 12.sp,
-                    color = onSurfaceVariant
+                    color = onSurfaceVariant,
+                    maxLines = 1,
+                    overflow = TextOverflow.Ellipsis
                 )
             }
         }

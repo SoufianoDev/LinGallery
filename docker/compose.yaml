@@ -1,0 +1,27 @@
+name: lingallery
+
+services:
+  dev:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+    working_dir: /workspace
+    volumes:
+      - ..:/workspace:cached
+      - gradle-cache:/home/lingallery/.gradle
+      - cargo-registry:/usr/local/cargo/registry
+      - cargo-git:/usr/local/cargo/git
+    environment:
+      GRADLE_USER_HOME: /home/lingallery/.gradle
+      GRADLE_OPTS: >-
+        -Dorg.gradle.daemon=true
+        -Dorg.gradle.parallel=true
+        -Dorg.gradle.caching=true
+      JAVA_OPTS: -Xmx2g
+    stdin_open: true
+    tty: true
+
+volumes:
+  gradle-cache:
+  cargo-registry:
+  cargo-git:

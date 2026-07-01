@@ -23,11 +23,12 @@ import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
-import com.soufianodev.lingallery.model.PhoneScanProgress
 import com.soufianodev.lingallery.app.Strings
+import com.soufianodev.lingallery.devices.ui.SidebarBadge
 import com.soufianodev.lingallery.model.Album
 import com.soufianodev.lingallery.app.AppConst
-import com.soufianodev.lingallery.ui.theme.AppIcons
+import com.soufianodev.lingallery.ui.icons.AppIcons
+import java.nio.file.Path
 import com.soufianodev.lingallery.ui.theme.DarkPalette
 import com.soufianodev.lingallery.ui.theme.LightPalette
 
@@ -37,7 +38,8 @@ fun AlbumSidebar(
     currentAlbumIndex: Int,
     onAlbumSelected: (Int) -> Unit,
     isDark: Boolean,
-    phoneScanProgress: Map<String, PhoneScanProgress> = emptyMap(),
+    badges: List<SidebarBadge> = emptyList(),
+    deviceMounts: Set<Path> = emptySet(),
     modifier: Modifier = Modifier
 ) {
     val surface = if (isDark) DarkPalette.SURFACE else LightPalette.SURFACE
@@ -106,7 +108,8 @@ fun AlbumSidebar(
                             .padding(start = 16.dp, end = 8.dp),
                         verticalAlignment = Alignment.CenterVertically
                     ) {
-                        if (album.isPhoneAlbum) {
+                        val isDeviceMount = album.path in deviceMounts
+                        if (album.isDeviceAlbum || isDeviceMount) {
                             Icon(
                                 imageVector = AppIcons.Smartphone,
                                 contentDescription = null,
@@ -115,18 +118,31 @@ fun AlbumSidebar(
                             )
                             Spacer(Modifier.width(6.dp))
                         }
-                        Text(
-                            text = "${album.name} (${album.imageCount})",
-                            fontSize = 14.sp,
-                            fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
-                            color = textColor,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis,
-                            modifier = Modifier.weight(1f)
-                        )
-                        val isScanning = album.isPhoneAlbum &&
-                            phoneScanProgress.values.any { it.isScanning }
-                        if (isScanning) {
+                        if (album.statusText != null) {
+                            Text(
+                                text = "${album.name}  (${album.statusText})",
+                                fontSize = 14.sp,
+                                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                                color = textColor,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
+                            )
+                        } else {
+                            Text(
+                                text = "${album.name} (${album.imageCount})",
+                                fontSize = 14.sp,
+                                fontWeight = if (isSelected) FontWeight.SemiBold else FontWeight.Normal,
+                                color = textColor,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis,
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+                        val hasActiveBadge = album.isDeviceAlbum &&
+                            badges.any { it.isSpinning }
+                        val isTransitioning = album.statusIsTransition && isDeviceMount
+                        if (hasActiveBadge || isTransitioning) {
                             Spacer(Modifier.width(6.dp))
                             CircularProgressIndicator(
                                 modifier = Modifier.size(14.dp),
