@@ -43,6 +43,9 @@ class AppModule(
         },
         onImageAddedToAlbum = { albumPath, _ ->
             galleryStateHolder.updateState { it.syncAlbum(albumPath) }
+        },
+        onImageModified = { imagePath ->
+            galleryStateHolder.onImageModified(imagePath)
         }
     )
 

@@ -254,8 +254,8 @@ fn decode_image(
     let mut output = Vec::with_capacity(16 + pixels.len());
     output.extend_from_slice(&(final_w as i32).to_le_bytes());
     output.extend_from_slice(&(final_h as i32).to_le_bytes());
-    output.extend_from_slice(&(eff_w as i32).to_le_bytes());
-    output.extend_from_slice(&(eff_h as i32).to_le_bytes());
+    output.extend_from_slice(&(eff_w as f32).to_le_bytes());
+    output.extend_from_slice(&(eff_h as f32).to_le_bytes());
     output.extend_from_slice(&pixels);
     Some(output)
 }

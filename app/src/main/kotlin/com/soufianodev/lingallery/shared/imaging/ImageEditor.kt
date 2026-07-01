@@ -13,6 +13,7 @@ import com.sksamuel.scrimage.nio.PngWriter
 import com.sksamuel.scrimage.nio.TiffWriter
 import com.sksamuel.scrimage.webp.WebpWriter
 import com.soufianodev.lingallery.app.Strings
+import java.io.FileOutputStream
 import java.nio.file.Files
 import java.nio.file.Path
 import java.nio.file.attribute.FileTime
@@ -37,8 +38,7 @@ object ImageEditor {
             val cropped = img.subimage(left, top, right - left, bottom - top)
             val dest = destPath ?: path
             val writer = writerForExtension(dest) ?: return false
-            cropped.output(writer, dest.toFile())
-            true
+            writeWithFlush(cropped, writer, dest.toFile())
         } catch (_: Exception) { false }
     }
 
@@ -48,8 +48,7 @@ object ImageEditor {
                 .applyExifOrientation(path)
                 .rotate(Degrees(degrees))
             val writer = writerForExtension(path) ?: return false
-            img.output(writer, path.toFile())
-            true
+            writeWithFlush(img, writer, path.toFile())
         } catch (_: Exception) { false }
     }
 
@@ -59,8 +58,7 @@ object ImageEditor {
                 .applyExifOrientation(path)
                 .flipX()
             val writer = writerForExtension(path) ?: return false
-            img.output(writer, path.toFile())
-            true
+            writeWithFlush(img, writer, path.toFile())
         } catch (_: Exception) { false }
     }
 
@@ -149,6 +147,16 @@ object ImageEditor {
             "tiff", "tif" -> TiffWriter()
             else -> null
         }
+    }
+
+    private fun writeWithFlush(img: ImmutableImage, writer: ImageWriter, file: java.io.File): Boolean {
+        return try {
+            img.output(writer, file)
+            FileOutputStream(file, true).use { fos ->
+                fos.channel.force(true)
+            }
+            Files.size(file.toPath()) > 0
+        } catch (_: Exception) { false }
     }
 
     private fun ImmutableImage.applyExifOrientation(path: Path): ImmutableImage {

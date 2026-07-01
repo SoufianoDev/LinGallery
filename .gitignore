@@ -21,6 +21,8 @@ captures
 app/src/main/jniLibs/
 app/src/main/rust/target/
 
+app/bin/
+
 # Fork's additional .gitignore entries
 *.log
 *.apk

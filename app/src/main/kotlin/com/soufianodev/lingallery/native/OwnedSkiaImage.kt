@@ -6,14 +6,16 @@ import java.util.concurrent.atomic.AtomicBoolean
 enum class ImagePipelineRole {
     THUMBNAIL,
     VIEWER,
+    SVG_VIEWER,
+    SVG_THUMBNAIL,
 }
 
 class OwnedSkiaImage(
     val requestId: Long,
     val pathKey: String,
     val role: ImagePipelineRole,
-    val sourceWidth: Int,
-    val sourceHeight: Int,
+    val sourceWidth: Float,
+    val sourceHeight: Float,
     val decodedWidth: Int,
     val decodedHeight: Int,
     val byteCount: Int,

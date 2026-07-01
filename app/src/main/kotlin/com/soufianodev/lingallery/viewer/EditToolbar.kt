@@ -37,7 +37,8 @@ fun EditToolbar(
     onRename: () -> Unit,
     onInfo: () -> Unit,
     onDelete: () -> Unit,
-    isDark: Boolean
+    isDark: Boolean,
+    isSvg: Boolean = false,
 ) {
     val onSurface = if (isDark) DarkPalette.ON_SURFACE else LightPalette.ON_SURFACE
     val surface = if (isDark) DarkPalette.SURFACE else LightPalette.SURFACE
@@ -74,7 +75,8 @@ fun EditToolbar(
                     onDismissRequest = { showCopyMenu = false },
                     properties = PopupProperties(focusable = false)
                 ) {
-                    DropdownMenuItem(text = { Text(Strings.Menu.copyClipboard, fontSize = 13.sp) }, onClick = { showCopyMenu = false; onCopyClipboard() })
+                    val copyLabel = if (isSvg) Strings.Menu.copySvgCode else Strings.Menu.copyClipboard
+                    DropdownMenuItem(text = { Text(copyLabel, fontSize = 13.sp) }, onClick = { showCopyMenu = false; onCopyClipboard() })
                     DropdownMenuItem(text = { Text(Strings.Menu.copyName, fontSize = 13.sp) }, onClick = { showCopyMenu = false; onCopyName() })
                     DropdownMenuItem(text = { Text(Strings.Menu.copyPath, fontSize = 13.sp) }, onClick = { showCopyMenu = false; onCopyPath() })
                 }

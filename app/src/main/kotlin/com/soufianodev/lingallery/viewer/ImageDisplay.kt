@@ -12,6 +12,7 @@ import androidx.compose.ui.graphics.graphicsLayer
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.gestures.detectTransformGestures
 import androidx.compose.foundation.layout.*
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.*
@@ -31,17 +32,22 @@ import androidx.compose.ui.layout.onSizeChanged
 import androidx.compose.ui.unit.dp
 import com.soufianodev.lingallery.app.AppConst
 import com.soufianodev.lingallery.app.Strings
+import com.soufianodev.lingallery.ui.icons.AppIcons
 import com.soufianodev.lingallery.model.ImageFile
 import com.soufianodev.lingallery.native.MemoryManager
+import com.soufianodev.lingallery.native.ImagePipelineRole
 import com.soufianodev.lingallery.native.NativeImagePipeline
+import com.soufianodev.lingallery.native.NativeSvgPipeline
 import com.soufianodev.lingallery.native.OwnedSkiaImage
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.withContext
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.awaitCancellation
 import kotlin.coroutines.cancellation.CancellationException
 import kotlin.math.pow
 import java.nio.file.Path
+import kotlin.io.path.extension
 import org.jetbrains.skia.Rect as SkiaRect
 import org.jetbrains.skia.SamplingMode
 
@@ -63,6 +69,10 @@ fun ImageDisplay(
     onCropRectChange: (DisplayCrop?) -> Unit,
     images: List<ImageFile> = emptyList(),
     currentIndex: Int = 0,
+    svgDocumentHandle: Long = -1L,
+    svgEditVersion: Int = 0,
+    svgSourceWidth: Float = 0f,
+    svgSourceHeight: Float = 0f,
     modifier: Modifier = Modifier
 ) {
     var currentImage by remember { mutableStateOf<OwnedSkiaImage?>(null) }
@@ -75,6 +85,11 @@ fun ImageDisplay(
     var lastDecodeBucket by remember { mutableFloatStateOf(0f) }
     var lastImageLastModified by remember { mutableLongStateOf(0L) }
 
+    // SVG-specific deduplication state
+    var lastSvgHandle by remember { mutableLongStateOf(-1L) }
+    var lastSvgBucket by remember { mutableFloatStateOf(0f) }
+    var lastSvgVersion by remember { mutableIntStateOf(-1) }
+
     LaunchedEffect(memoryPressure) {
         if (memoryPressure >= MemoryManager.PressureLevel.CRITICAL) {
             NativeImagePipeline.trim()
@@ -85,6 +100,8 @@ fun ImageDisplay(
     var latestRequestId by remember { mutableLongStateOf(0L) }
     val decodeBucket = remember(scale) { NativeImagePipeline.decodeBucket(scale) }
 
+    val isSvg = path?.extension?.lowercase() == "svg"
+
     DisposableEffect(Unit) {
         onDispose {
             currentImage?.close()
@@ -93,15 +110,38 @@ fun ImageDisplay(
         }
     }
 
-    LaunchedEffect(path, imageLastModified, viewportWidth, viewportHeight, decodeBucket) {
-        if (path == lastDecodePath && decodeBucket <= lastDecodeBucket
-            && imageLastModified == lastImageLastModified
-            && currentImage != null && !currentImage!!.isClosed) {
-            return@LaunchedEffect
+    LaunchedEffect(
+        path, imageLastModified, viewportWidth, viewportHeight, decodeBucket, svgEditVersion
+    ) {
+        if (!isSvg) {
+            if (path == lastDecodePath && decodeBucket <= lastDecodeBucket
+                && imageLastModified == lastImageLastModified
+                && currentImage != null && !currentImage!!.isClosed) {
+                return@LaunchedEffect
+            }
+        } else {
+            // Skip SVG re-render if the handle, zoom bucket, and edit version are all unchanged.
+            if (svgDocumentHandle == lastSvgHandle
+                && decodeBucket == lastSvgBucket
+                && svgEditVersion == lastSvgVersion
+                && currentImage != null && !currentImage!!.isClosed) {
+                return@LaunchedEffect
+            }
+            // Debounce: wait for rapid zoom scrolling to settle before rendering.
+            delay(80L)
+            if (!isActive) return@LaunchedEffect
         }
+        if (path != lastDecodePath) {
+            currentImage?.close()
+            currentImage = null
+        }
+
         lastDecodePath = path
         lastDecodeBucket = decodeBucket
         lastImageLastModified = imageLastModified
+        lastSvgHandle = svgDocumentHandle
+        lastSvgBucket = decodeBucket
+        lastSvgVersion = svgEditVersion
 
         val requestId = NativeImagePipeline.nextRequestId()
         latestRequestId = requestId
@@ -113,15 +153,32 @@ fun ImageDisplay(
         }
 
         try {
-            val owned = withContext(Dispatchers.IO) {
-                NativeImagePipeline.decodeViewer(
-                    requestId = requestId,
-                    path = path,
-                    lastModified = imageLastModified,
-                    viewportWidthPx = viewportWidth,
-                    viewportHeightPx = viewportHeight,
-                    zoomScale = scale,
-                )?.toOwnedImage()
+            val owned = if (isSvg && svgDocumentHandle >= 0L) {
+                withContext(Dispatchers.IO) {
+                    val bucket = NativeImagePipeline.decodeBucket(scale)
+                    val renderW = (kotlin.math.ceil(viewportWidth * bucket).toInt()).coerceAtLeast(1)
+                    val renderH = (kotlin.math.ceil(viewportHeight * bucket).toInt()).coerceAtLeast(1)
+                    val bytes = NativeSvgPipeline.render(
+                        svgDocumentHandle, renderW, renderH
+                    ) ?: return@withContext null
+                    NativeImagePipeline.parseResult(
+                        requestId,
+                        "${path}_svg_v${svgEditVersion}",
+                        ImagePipelineRole.SVG_VIEWER,
+                        bytes
+                    )?.toOwnedImage()
+                }
+            } else {
+                withContext(Dispatchers.IO) {
+                    NativeImagePipeline.decodeViewer(
+                        requestId = requestId,
+                        path = path,
+                        lastModified = imageLastModified,
+                        viewportWidthPx = viewportWidth,
+                        viewportHeightPx = viewportHeight,
+                        zoomScale = scale,
+                    )?.toOwnedImage()
+                }
             }
             if (!isActive || latestRequestId != requestId) {
                 owned?.close()
@@ -156,11 +213,20 @@ fun ImageDisplay(
     ) {
         when {
             loadError -> {
-                Text(
-                    text = Strings.Viewer.failedLoad,
-                    color = MaterialTheme.colorScheme.error,
-                    style = MaterialTheme.typography.bodyLarge
-                )
+                Column(horizontalAlignment = Alignment.CenterHorizontally) {
+                    Icon(
+                        imageVector = AppIcons.BrokenImage,
+                        contentDescription = "Broken image",
+                        modifier = Modifier.size(64.dp),
+                        tint = MaterialTheme.colorScheme.error
+                    )
+                    Spacer(Modifier.height(12.dp))
+                    Text(
+                        text = Strings.Viewer.failedLoad,
+                        color = MaterialTheme.colorScheme.error,
+                        style = MaterialTheme.typography.bodyLarge
+                    )
+                }
             }
             currentImage != null -> {
                 ImageDisplayContent(

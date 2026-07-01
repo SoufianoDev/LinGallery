@@ -18,8 +18,8 @@ data class DecodedImageDto(
     val role: ImagePipelineRole,
     val decodedWidth: Int,
     val decodedHeight: Int,
-    val sourceWidth: Int,
-    val sourceHeight: Int,
+    val sourceWidth: Float,
+    val sourceHeight: Float,
     val pixels: ByteArray,
 ) {
     fun toOwnedImage(): OwnedSkiaImage {
@@ -131,7 +131,7 @@ object NativeImagePipeline {
         }
     }
 
-    private fun parseResult(
+    internal fun parseResult(
         requestId: Long,
         pathKey: String,
         role: ImagePipelineRole,
@@ -141,8 +141,8 @@ object NativeImagePipeline {
         val header = ByteBuffer.wrap(bytes, 0, HEADER_BYTES).order(ByteOrder.LITTLE_ENDIAN)
         val decodedWidth = header.int
         val decodedHeight = header.int
-        val sourceWidth = header.int
-        val sourceHeight = header.int
+        val sourceWidth = header.float
+        val sourceHeight = header.float
         val pixelCount = decodedWidth.toLong() * decodedHeight.toLong() * 4L
         if (decodedWidth <= 0 || decodedHeight <= 0 || pixelCount <= 0 || pixelCount > Int.MAX_VALUE) return null
         if (bytes.size != HEADER_BYTES + pixelCount.toInt()) return null

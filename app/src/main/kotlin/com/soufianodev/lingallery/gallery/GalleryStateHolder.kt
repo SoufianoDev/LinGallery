@@ -69,6 +69,14 @@ class GalleryStateHolder(
         _uiState.update(transform)
     }
 
+    fun onImageModified(imagePath: Path) {
+        val albumPath = imagePath.parent
+        val info = repository.readImageFileInfo(imagePath)
+        if (info != null) {
+            updateState { it.modifyImage(albumPath, imagePath, info) }
+        }
+    }
+
     fun setStatus(msg: String) {
         _statusMessage.value = msg
     }

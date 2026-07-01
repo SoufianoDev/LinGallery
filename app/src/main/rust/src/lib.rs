@@ -3,6 +3,7 @@ mod image_pipeline;
 pub mod lin_logger;
 mod mtp_bridge;
 mod memory_manager;
+mod svg_pipeline;
 
 #[global_allocator]
 static GLOBAL: tikv_jemallocator::Jemalloc = tikv_jemallocator::Jemalloc;

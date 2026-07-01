@@ -164,7 +164,6 @@ compose.desktop {
             "-Djava.library.path=${layout.projectDirectory.dir("src/main/jniLibs").asFile.absolutePath}",
             "-Dskiko.renderApi=OPENGL",
             "-Dskiko.gpu.resourceCacheLimit=128M",
-            "-Dsun.awt.enableExtraMouseButtons=false",
             "-Xss512k",
             "-Xmx2g",
             "-XX:NativeMemoryTracking=summary"

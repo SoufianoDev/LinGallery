@@ -47,7 +47,8 @@ fun ViewerScreen(
     onToggleFullscreen: (isFullscreen: Boolean) -> Unit,
     onMove: () -> Unit = {},
     onCopyFile: () -> Unit = {},
-    onRestoreFromTrash: (onDone: (Boolean, String) -> Unit) -> Unit = {}
+    onRestoreFromTrash: (onDone: (Boolean, String) -> Unit) -> Unit = {},
+    awtWindow: java.awt.Window? = null,
 ) {
     val state by stateHolder.uiState.collectAsState()
     val currentImage = state.currentImage
@@ -81,6 +82,19 @@ fun ViewerScreen(
         if (!anyDialogOpen) {
             focusRequester.requestFocus()
         }
+    }
+
+    DisposableEffect(awtWindow) {
+        val adapter = object : java.awt.event.MouseAdapter() {
+            override fun mousePressed(e: java.awt.event.MouseEvent) {
+                if (e.button == 4 || e.button == 6) {
+                    stateHolder.stopSlideshow()
+                    onBack()
+                }
+            }
+        }
+        awtWindow?.addMouseListener(adapter)
+        onDispose { awtWindow?.removeMouseListener(adapter) }
     }
 
     fun zoomIn() {
@@ -208,6 +222,16 @@ fun ViewerScreen(
                 }
             }
             Key.Delete -> { deleteCurrentImage(); true }
+            Key.Z -> {
+                if (event.isCtrlPressed) {
+                    if (event.isShiftPressed) stateHolder.svgRedo()
+                    else stateHolder.svgUndo()
+                    true
+                } else false
+            }
+            Key.Y -> {
+                if (event.isCtrlPressed) { stateHolder.svgRedo(); true } else false
+            }
             else -> false
         }
     }
@@ -218,6 +242,14 @@ fun ViewerScreen(
             .background(bg)
             .focusTarget()
             .focusRequester(focusRequester)
+            .onPreviewKeyEvent { event ->
+                if (event.type == KeyEventType.KeyDown && event.key == Key.Spacebar) {
+                    stateHolder.toggleSlideshow()
+                    true
+                } else {
+                    false
+                }
+            }
             .onKeyEvent(::handleKeyEvent)
     ) {
         Column(modifier = Modifier.fillMaxSize().background(bg)) {
@@ -379,6 +411,10 @@ fun ViewerScreen(
                     },
                     images = state.images,
                     currentIndex = state.currentIndex,
+                    svgDocumentHandle = state.svgDocumentHandle,
+                    svgEditVersion = state.svgEditVersion,
+                    svgSourceWidth = state.svgSourceWidth,
+                    svgSourceHeight = state.svgSourceHeight,
                     modifier = Modifier.fillMaxSize()
                 )
 
@@ -452,8 +488,13 @@ fun ViewerScreen(
                         }
                     },
                     onCopyClipboard = { stateHolder.copyImage { ok ->
-                        if (ok) onShowSnackbar(Strings.Snackbar.imageCopied)
-                        else onShowErrorSnackbar(Strings.Snackbar.copyFailed)
+                        if (ok) {
+                            val msg = if (currentImage?.extension == ".svg") Strings.Snackbar.svgCodeCopied else Strings.Snackbar.imageCopied
+                            onShowSnackbar(msg)
+                        } else {
+                            val msg = if (currentImage?.extension == ".svg") Strings.Snackbar.svgCodeCopyFailed else Strings.Snackbar.copyFailed
+                            onShowErrorSnackbar(msg)
+                        }
                     }},
                     onCopyName = { stateHolder.copyImageName { ok ->
                         if (ok) onShowSnackbar(Strings.Snackbar.nameCopied)
@@ -468,7 +509,8 @@ fun ViewerScreen(
                     onRename = { showRename() },
                     onInfo = { showExifInfo() },
                     onDelete = { deleteCurrentImage() },
-                    isDark = isDark
+                    isDark = isDark,
+                    isSvg = currentImage?.extension == ".svg",
                 )
             }
         }

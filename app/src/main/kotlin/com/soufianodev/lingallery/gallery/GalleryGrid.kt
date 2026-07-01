@@ -11,13 +11,16 @@ import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.aspectRatio
 import androidx.compose.foundation.layout.fillMaxHeight
 import androidx.compose.foundation.layout.fillMaxSize
+import androidx.compose.foundation.layout.height
 import androidx.compose.foundation.layout.padding
+import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.grid.GridCells
 import androidx.compose.foundation.lazy.grid.LazyVerticalGrid
 import androidx.compose.foundation.lazy.grid.itemsIndexed
 import androidx.compose.foundation.lazy.grid.LazyGridState
 import androidx.compose.foundation.rememberScrollbarAdapter
 import androidx.compose.foundation.shape.RoundedCornerShape
+import androidx.compose.material3.Icon
 import androidx.compose.material3.MaterialTheme
 import androidx.compose.material3.Text
 import androidx.compose.runtime.Composable
@@ -40,8 +43,11 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.soufianodev.lingallery.app.Strings
 import com.soufianodev.lingallery.model.ImageFile
+import com.soufianodev.lingallery.ui.icons.AppIcons
 import com.soufianodev.lingallery.native.MemoryManager
 import com.soufianodev.lingallery.native.NativeImagePipeline
+import com.soufianodev.lingallery.native.NativeSvgPipeline
+import com.soufianodev.lingallery.native.ImagePipelineRole
 import com.soufianodev.lingallery.native.OwnedSkiaImage
 import com.soufianodev.lingallery.ui.component.stablePointerHoverIcon
 import com.soufianodev.lingallery.ui.theme.DarkPalette
@@ -56,6 +62,8 @@ import kotlinx.coroutines.sync.withPermit
 import kotlinx.coroutines.withContext
 import org.jetbrains.skia.Rect
 import org.jetbrains.skia.SamplingMode
+import kotlin.io.path.extension
+import java.nio.file.Path
 import kotlin.math.max
 
 private const val MAX_THUMBNAILS = 80
@@ -67,6 +75,27 @@ private data class ThumbnailKey(
     val path: String,
     val lastModified: Long,
 )
+
+private fun decodeSvgThumbnail(
+    requestId: Long,
+    path: Path,
+    targetSize: Int,
+    key: ThumbnailKey,
+): OwnedSkiaImage? {
+    val handle = NativeSvgPipeline.load(path)
+    if (handle < 0L) return null
+    try {
+        val bytes = NativeSvgPipeline.render(handle, targetSize, targetSize) ?: return null
+        return NativeImagePipeline.parseResult(
+            requestId,
+            "${path}_svg_thumb",
+            ImagePipelineRole.SVG_THUMBNAIL,
+            bytes
+        )?.toOwnedImage()
+    } finally {
+        NativeSvgPipeline.release(handle)
+    }
+}
 
 private class GalleryThumbnailController(
     private val scope: CoroutineScope,
@@ -103,13 +132,17 @@ private class GalleryThumbnailController(
                 try {
                     val owned = thumbnailDecodeThrottle.withPermit {
                         withContext(Dispatchers.IO) {
-                            NativeImagePipeline.decodeThumbnail(
-                                requestId = requestId,
-                                path = image.path,
-                                lastModified = image.lastModified,
-                                targetWidthPx = target,
-                                targetHeightPx = target,
-                            )?.toOwnedImage()
+                            if (image.extension == ".svg") {
+                                decodeSvgThumbnail(requestId, image.path, target, key)
+                            } else {
+                                NativeImagePipeline.decodeThumbnail(
+                                    requestId = requestId,
+                                    path = image.path,
+                                    lastModified = image.lastModified,
+                                    targetWidthPx = target,
+                                    targetHeightPx = target,
+                                )?.toOwnedImage()
+                            }
                         }
                     }
                     val stillActive = generations[key] == generation && key in activeKeys
@@ -272,7 +305,17 @@ private fun ThumbnailImage(
     modifier: Modifier = Modifier,
 ) {
     if (owned == null || owned.isClosed) {
-        Box(modifier = modifier.background(MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.5f)))
+        Box(
+            modifier = modifier.background(MaterialTheme.colorScheme.surfaceContainer.copy(alpha = 0.5f)),
+            contentAlignment = Alignment.Center
+        ) {
+            Icon(
+                imageVector = AppIcons.BrokenImage,
+                contentDescription = "Broken image",
+                modifier = Modifier.size(45.dp),
+                tint = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.5f)
+            )
+        }
         return
     }
     SkiaImageCanvas(owned = owned, contentScale = contentScale, modifier = modifier)

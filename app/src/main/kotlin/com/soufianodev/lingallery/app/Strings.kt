@@ -75,6 +75,8 @@ object Strings {
         val deleteFailed get() = Strings["snackbar.delete.failed"]
         fun deleted(name: String) = Strings.fmt("snackbar.deleted", name)
         fun permanentlyDeleted(name: String) = Strings.fmt("snackbar.permanently.deleted", name)
+        val svgCodeCopied get() = Strings["snackbar.svg.code.copied"]
+        val svgCodeCopyFailed get() = Strings["snackbar.svg.code.copy.failed"]
         val nameCopied get() = Strings["snackbar.name.copied"]
         val pathCopied get() = Strings["snackbar.path.copied"]
         val imageRestored get() = Strings["snackbar.image.restored"]
@@ -127,6 +129,7 @@ object Strings {
         val copyClipboard get() = Strings["menu.copy.clipboard"]
         val copyName get() = Strings["menu.copy.name"]
         val copyPath get() = Strings["menu.copy.path"]
+        val copySvgCode get() = Strings["menu.copy.svg.code"]
         val moveFolder get() = Strings["menu.move.folder"]
         val copyFolder get() = Strings["menu.copy.folder"]
     }

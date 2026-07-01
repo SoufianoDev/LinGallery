@@ -177,7 +177,8 @@ fun App(module: AppModule) {
                 },
                 onMove = { launchDirectoryPicker("move") },
                 onCopyFile = { launchDirectoryPicker("copy") },
-                onRestoreFromTrash = { cb -> module.undoDelete(cb) }
+                onRestoreFromTrash = { cb -> module.undoDelete(cb) },
+                awtWindow = module.awtWindow,
             )
         }
 

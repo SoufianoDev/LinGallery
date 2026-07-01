@@ -56,6 +56,16 @@ fun CropOverlay(
     var dragStartOffset by remember { mutableStateOf(Offset.Zero) }
     var dragStartCrop by remember { mutableStateOf(cropRect) }
 
+    LaunchedEffect(initialCropRect, imageRect) {
+        if (activeHandle == HandlePosition.None) {
+            cropRect = initialCropRect ?: run {
+                val insetX = imageRect.width * 0.1f
+                val insetY = imageRect.height * 0.1f
+                imageRect.deflate(insetX, insetY)
+            }
+        }
+    }
+
     val hitArea = 24.dp
 
     // Theme colors

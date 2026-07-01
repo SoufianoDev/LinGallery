@@ -42,4 +42,7 @@ object AppIcons {
     val MobileBlock = com.soufianodev.lingallery.ui.icons.MobileBlock
     val Transfer = Icons.AutoMirrored.Filled.DriveFileMove
     val Warning = Icons.Filled.Warning
+    val Undo = Icons.Filled.Undo
+    val Redo = Icons.Filled.Redo
+    val BrokenImage = com.soufianodev.lingallery.ui.icons.BrokenImage
 }

@@ -6,7 +6,7 @@ object AppConst {
     const val APP_VERSION = "1.0.0"
     val DEFAULT_SCAN_ROOTS = listOf("~/Pictures", "~/Downloads", "~/Desktop")
     val SUPPORTED_FORMATS = setOf(".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tiff", ".tif", ".svg")
-    val EDITABLE_FORMATS = setOf(".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tiff", ".tif")
+    val EDITABLE_FORMATS = setOf(".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tiff", ".tif", ".svg")
     const val THUMB_SIZE = 220
     const val PRELOAD_AHEAD = 3
     const val SLIDESHOW_DEFAULT_INTERVAL_MS = 4000L
