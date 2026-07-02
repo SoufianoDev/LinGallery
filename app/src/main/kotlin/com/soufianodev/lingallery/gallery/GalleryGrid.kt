@@ -195,6 +195,7 @@ fun GalleryGrid(
     hasAlbums: Boolean = true,
     modifier: Modifier = Modifier
 ) {
+    val primary = if (isDark) DarkPalette.PRIMARY else LightPalette.PRIMARY
     val surfaceContainer = if (isDark) DarkPalette.SURFACE_CONTAINER else LightPalette.SURFACE_CONTAINER
     val onSurfaceVariant = if (isDark) DarkPalette.ON_SURFACE_VARIANT else LightPalette.ON_SURFACE_VARIANT
     val scrollbarStyle = ScrollbarStyle(
@@ -202,8 +203,8 @@ fun GalleryGrid(
         thickness = 6.dp,
         shape = RoundedCornerShape(3.dp),
         hoverDurationMillis = 100,
-        unhoverColor = onSurfaceVariant.copy(alpha = 0.2f),
-        hoverColor = onSurfaceVariant.copy(alpha = 0.5f)
+        unhoverColor = primary.copy(alpha = 0.4f),
+        hoverColor = primary.copy(alpha = 0.7f)
     )
     val scope = rememberCoroutineScope()
     val controller = remember(images) {

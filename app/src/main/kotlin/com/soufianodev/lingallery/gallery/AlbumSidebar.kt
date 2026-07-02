@@ -78,8 +78,8 @@ fun AlbumSidebar(
             thickness = 6.dp,
             shape = RoundedCornerShape(3.dp),
             hoverDurationMillis = 100,
-            unhoverColor = onSurfaceVariant.copy(alpha = 0.2f),
-            hoverColor = onSurfaceVariant.copy(alpha = 0.5f)
+            unhoverColor = primary.copy(alpha = 0.4f),
+            hoverColor = primary.copy(alpha = 0.7f)
         )
 
         val albumListState = rememberLazyListState()

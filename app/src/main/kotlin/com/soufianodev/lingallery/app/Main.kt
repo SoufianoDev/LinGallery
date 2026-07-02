@@ -20,11 +20,13 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.platform.LocalDensity
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.window.Window
 import androidx.compose.ui.window.application
 import androidx.compose.ui.window.rememberWindowState
+import java.awt.Dimension
 import com.github.panpf.sketch.PlatformContext
 import com.github.panpf.sketch.SingletonSketch
 import com.github.panpf.sketch.Sketch
@@ -66,6 +68,13 @@ fun main() = application {
         title = Strings.App.name,
         state = windowState
     ) {
+        val density = LocalDensity.current
+        val minWindowWidth = with(density) { 480.dp.roundToPx() }
+        val minWindowHeight = with(density) { 340.dp.roundToPx() }
+        SideEffect {
+            window.minimumSize = Dimension(minWindowWidth, minWindowHeight)
+        }
+
         val module = remember {
             AppModule(appScope, window, onNativeLibFailed = {
                 showNativeLibError.value = true
