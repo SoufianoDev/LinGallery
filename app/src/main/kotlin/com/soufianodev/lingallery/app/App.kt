@@ -95,6 +95,19 @@ fun App(module: AppModule) {
         }
     }
 
+    fun showGuidanceSnackbar(msg: String) {
+        snackbarTitle = ""
+        snackbarDetails = ""
+        snackbarIsError = false
+        snackbarAutoClose = true
+        snackbarIsDismissible = true
+        snackbarCloseIconStyle = CloseIconStyle.NORMAL
+        snackbarShowCloseButton = false
+        scope.launch {
+            snackbarHostState.showSnackbar(msg, duration = SnackbarDuration.Long)
+        }
+    }
+
     fun showStructuredSnackbar(title: String, details: String) {
         snackbarTitle = title
         snackbarDetails = details
@@ -197,7 +210,7 @@ fun App(module: AppModule) {
                         DialogActionKind.RETRY  -> module.deviceConnectionStateHolder.establish()
                         DialogActionKind.CANCEL -> {
                             module.deviceConnectionStateHolder.cancel()
-                            showSnackbar(Strings.DeviceIssue.reconnectGuidance)
+                            showGuidanceSnackbar(Strings.DeviceIssue.reconnectGuidance)
                         }
                         DialogActionKind.DISMISS -> module.deviceConnectionStateHolder.dismiss()
                     }}

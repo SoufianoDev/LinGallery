@@ -195,5 +195,20 @@ object LinLogger {
         try { Files.deleteIfExists(file) } catch (_: Exception) {}
     }
 
+    fun formatDuration(ms: Long): String {
+        val days = ms / 86400000
+        val hours = (ms % 86400000) / 3600000
+        val minutes = (ms % 3600000) / 60000
+        val seconds = (ms % 60000) / 1000
+        val millis = ms % 1000
+        return when {
+            days > 0 -> "${days}d ${hours}h"
+            hours > 0 -> "${hours}h ${minutes}m ${seconds}s"
+            minutes > 0 -> "${minutes}m ${seconds}s ${millis}ms"
+            seconds > 0 -> "${seconds}s ${millis}ms"
+            else -> "${millis}ms"
+        }
+    }
+
     private const val TAG = "LinLogger"
 }

@@ -71,6 +71,10 @@ class MtpProtocol(
     private var mountJob: Job? = null
     private var initialized = false
 
+    private val serialJobs = ConcurrentHashMap<String, Job>()
+    private val mountingSerials = ConcurrentHashMap.newKeySet<String>()
+    private val suppressedSerials = ConcurrentHashMap.newKeySet<String>()
+
     override fun init(scope: CoroutineScope) {}
 
     override fun start() {
@@ -89,6 +93,10 @@ class MtpProtocol(
     override fun stop() {
         mountJob?.cancel()
         mountJob = null
+        serialJobs.values.forEach { it.cancel() }
+        serialJobs.clear()
+        mountingSerials.clear()
+        suppressedSerials.clear()
         NativeMtpBridge.setBufferedMode(false)
         LinLogger.endBufferedMode()
         _deviceStates.value = emptyMap()
@@ -101,16 +109,23 @@ class MtpProtocol(
     private suspend fun handleEvent(event: MtpEvent) {
         when (event) {
             is MtpEvent.DeviceDetected -> {
-                _deviceStates.value = _deviceStates.value + (event.serial to MtpDeviceState.Detected(
-                    serial = event.serial,
-                    manufacturer = event.manufacturer,
-                    model = event.model,
-                ))
-                updateActivity(event.serial, DeviceActivity.Connecting(
-                    deviceId = event.serial,
-                    deviceName = getDeviceDisplayName(event.serial),
-                ))
-                mountDevice(event.serial, event.manufacturer, event.model)
+                if (event.serial in suppressedSerials) {
+                    LinLogger.d("MtpProtocol", "DeviceDetected suppressed for $event.serial (cancel was pressed)")
+                    return
+                }
+                serialJobs.remove(event.serial)?.cancel()
+                serialJobs[event.serial] = scope.launch {
+                    _deviceStates.value = _deviceStates.value + (event.serial to MtpDeviceState.Detected(
+                        serial = event.serial,
+                        manufacturer = event.manufacturer,
+                        model = event.model,
+                    ))
+                    updateActivity(event.serial, DeviceActivity.Connecting(
+                        deviceId = event.serial,
+                        deviceName = getDeviceDisplayName(event.serial),
+                    ))
+                    mountDevice(event.serial, event.manufacturer, event.model)
+                }
             }
 
             is MtpEvent.DeviceAlbumCreated -> {
@@ -257,6 +272,7 @@ class MtpProtocol(
             }
 
             is MtpEvent.DeviceDisconnected -> {
+                serialJobs.remove(event.serial)?.cancel()
                 val mountPath = event.mountPath ?: mountPaths[event.serial]
                 if (mountPath != null) {
                     val devName = getDeviceDisplayName(event.serial)
@@ -338,136 +354,159 @@ class MtpProtocol(
     private fun mountDevice(serial: String, manufacturer: String, model: String): Path? {
         val name = getDeviceDisplayName(serial)
 
-        when (NativeMtpBridge.probeDevice(serial)) {
-            MTP_ERR_PERMISSION -> {
-                val reason = "Permission denied — unlock your phone and accept the file access prompt"
-                LinLogger.w("MtpProtocol", "$name: probe → $reason")
-                recordIssue(serial, DeviceIssue.PermissionRequired)
-                _deviceStates.value = _deviceStates.value + (serial to MtpDeviceState.PermissionDenied(
-                    serial = serial, manufacturer = manufacturer, model = model, friendlyName = "", reason = reason,
-                ))
-                removeActivity(serial)
-                return null
-            }
-            MTP_ERR_ANDROID_NO_STORAGE -> {
-                val reason = "Unlock your phone and accept the \"Allow access to device data?\" prompt"
-                LinLogger.w("MtpProtocol", "$name: probe → $reason")
-                recordIssue(serial, DeviceIssue.DeviceLocked)
-                _deviceStates.value = _deviceStates.value + (serial to MtpDeviceState.PermissionDenied(
-                    serial = serial, manufacturer = manufacturer, model = model, friendlyName = "", reason = reason,
-                ))
-                removeActivity(serial)
-                return null
-            }
-            MTP_ERR_NO_STORAGE -> {
-                val reason = "No accessible storage — unlock your phone and accept the file access prompt"
-                LinLogger.w("MtpProtocol", "$name: probe → $reason")
-                recordIssue(serial, DeviceIssue.StorageUnavailable)
-                _deviceStates.value = _deviceStates.value + (serial to MtpDeviceState.Error(
-                    serial = serial, manufacturer = manufacturer, model = model, message = reason,
-                ))
-                removeActivity(serial)
-                return null
-            }
-        }
-
-        val mountDir = try {
-            createTempDirectory("lingallery-mtp-$serial")
-        } catch (e: Exception) {
-            LinLogger.e("MtpProtocol", "Failed to create mount dir: ${e.message}")
+        if (!mountingSerials.add(serial)) {
+            LinLogger.w("MtpProtocol", "$name: already mounting, skipping")
             return null
         }
+        LinLogger.d("MtpProtocol", "$name: mounting serial=$serial")
 
-        NativeMtpBridge.setBufferedMode(true)
-        LinLogger.startBufferedMode()
-
-        NativeMtpBridge.registerMountPath(serial, mountDir)
-
-        var result = NativeMtpBridge.mountDevice(serial, mountDir)
-
-        if (result == MTP_ERR_PERMISSION || result == MTP_ERR_ANDROID_NO_STORAGE || result == MTP_ERR_MOUNT) {
-            LinLogger.w("MtpProtocol", "$name: first mount attempt returned $result, cleaning up and retrying…")
-            killCompetingProcesses()
-            cleanupStaleMounts()
-            Thread.sleep(500)
-            NativeMtpBridge.registerMountPath(serial, mountDir)
-            result = NativeMtpBridge.mountDevice(serial, mountDir)
-        }
-
-        if (result != MTP_OK) {
-            NativeMtpBridge.clearMountPath(serial)
-            try { Files.deleteIfExists(mountDir) } catch (_: Exception) {}
-            NativeMtpBridge.setBufferedMode(false)
-            LinLogger.endBufferedMode()
-            val reason = when (result) {
-                MTP_ERR_PERMISSION         -> "Permission denied — unlock your phone and accept the file access prompt"
-                MTP_ERR_ANDROID_NO_STORAGE -> "Unlock your phone and accept the \"Allow access to device data?\" prompt"
-                MTP_ERR_NO_STORAGE         -> "No accessible storage — unlock your phone and accept the file access prompt"
-                MTP_ERR_MOUNT              -> "FUSE mount failed"
-                MTP_ERR_SAMSUNG_RESTRICTED -> "Samsung restricted MTP mode"
-                else                       -> "Mount failed (code $result)"
-            }
-            LinLogger.e("MtpProtocol", "$name: $reason")
-            when (result) {
+        try {
+            when (NativeMtpBridge.probeDevice(serial)) {
                 MTP_ERR_PERMISSION -> {
+                    val reason = "Permission denied — unlock your phone and accept the file access prompt"
+                    LinLogger.w("MtpProtocol", "$name: probe → $reason")
+                    suppressedSerials.add(serial)
                     recordIssue(serial, DeviceIssue.PermissionRequired)
                     _deviceStates.value = _deviceStates.value + (serial to MtpDeviceState.PermissionDenied(
                         serial = serial, manufacturer = manufacturer, model = model, friendlyName = "", reason = reason,
                     ))
+                    removeActivity(serial)
+                    return null
                 }
                 MTP_ERR_ANDROID_NO_STORAGE -> {
+                    val reason = "Unlock your phone and accept the \"Allow access to device data?\" prompt"
+                    LinLogger.w("MtpProtocol", "$name: probe → $reason")
+                    suppressedSerials.add(serial)
                     recordIssue(serial, DeviceIssue.DeviceLocked)
                     _deviceStates.value = _deviceStates.value + (serial to MtpDeviceState.PermissionDenied(
                         serial = serial, manufacturer = manufacturer, model = model, friendlyName = "", reason = reason,
                     ))
+                    removeActivity(serial)
+                    return null
                 }
-                else -> {
-                    recordIssue(serial, DeviceIssue.Unknown(code = result))
-                    galleryStateHolder.setStatus("$name: $reason")
+                MTP_ERR_NO_STORAGE -> {
+                    val reason = "No accessible storage — unlock your phone and accept the file access prompt"
+                    LinLogger.w("MtpProtocol", "$name: probe → $reason")
+                    recordIssue(serial, DeviceIssue.StorageUnavailable)
                     _deviceStates.value = _deviceStates.value + (serial to MtpDeviceState.Error(
                         serial = serial, manufacturer = manufacturer, model = model, message = reason,
                     ))
+                    removeActivity(serial)
+                    return null
                 }
             }
-            removeActivity(serial)
-            return null
+
+            val mountDir = try {
+                createTempDirectory("lingallery-mtp-$serial")
+            } catch (e: Exception) {
+                LinLogger.e("MtpProtocol", "Failed to create mount dir: ${e.message}")
+                return null
+            }
+
+            NativeMtpBridge.setBufferedMode(true)
+            LinLogger.startBufferedMode()
+
+            NativeMtpBridge.registerMountPath(serial, mountDir)
+
+            var result = NativeMtpBridge.mountDevice(serial, mountDir)
+
+            if (result == MTP_ERR_PERMISSION || result == MTP_ERR_ANDROID_NO_STORAGE || result == MTP_ERR_MOUNT) {
+                LinLogger.w("MtpProtocol", "$name: first mount attempt returned $result, cleaning up and retrying…")
+                killCompetingProcesses()
+                cleanupStaleMounts()
+                Thread.sleep(500)
+                NativeMtpBridge.registerMountPath(serial, mountDir)
+                result = NativeMtpBridge.mountDevice(serial, mountDir)
+            }
+
+            if (result != MTP_OK) {
+                NativeMtpBridge.clearMountPath(serial)
+                try { Files.deleteIfExists(mountDir) } catch (_: Exception) {}
+                NativeMtpBridge.setBufferedMode(false)
+                LinLogger.endBufferedMode()
+                val reason = when (result) {
+                    MTP_ERR_PERMISSION         -> "Permission denied — unlock your phone and accept the file access prompt"
+                    MTP_ERR_ANDROID_NO_STORAGE -> "Unlock your phone and accept the \"Allow access to device data?\" prompt"
+                    MTP_ERR_NO_STORAGE         -> "No accessible storage — unlock your phone and accept the file access prompt"
+                    MTP_ERR_MOUNT              -> "FUSE mount failed"
+                    MTP_ERR_SAMSUNG_RESTRICTED -> "Samsung restricted MTP mode"
+                    else                       -> "Mount failed (code $result)"
+                }
+                LinLogger.e("MtpProtocol", "$name: $reason")
+                when (result) {
+                    MTP_ERR_PERMISSION -> {
+                        recordIssue(serial, DeviceIssue.PermissionRequired)
+                        _deviceStates.value = _deviceStates.value + (serial to MtpDeviceState.PermissionDenied(
+                            serial = serial, manufacturer = manufacturer, model = model, friendlyName = "", reason = reason,
+                        ))
+                    }
+                    MTP_ERR_ANDROID_NO_STORAGE -> {
+                        recordIssue(serial, DeviceIssue.DeviceLocked)
+                        _deviceStates.value = _deviceStates.value + (serial to MtpDeviceState.PermissionDenied(
+                            serial = serial, manufacturer = manufacturer, model = model, friendlyName = "", reason = reason,
+                        ))
+                    }
+                    else -> {
+                        recordIssue(serial, DeviceIssue.Unknown(code = result))
+                        galleryStateHolder.setStatus("$name: $reason")
+                        _deviceStates.value = _deviceStates.value + (serial to MtpDeviceState.Error(
+                            serial = serial, manufacturer = manufacturer, model = model, message = reason,
+                        ))
+                    }
+                }
+                removeActivity(serial)
+                return null
+            }
+
+            mountPaths[serial] = mountDir
+            updateActivity(serial, DeviceActivity.Mounting(
+                deviceId = serial,
+                deviceName = name,
+            ))
+            _deviceStates.value = _deviceStates.value + (serial to MtpDeviceState.Mounting(
+                serial = serial,
+                manufacturer = manufacturer,
+                model = model,
+            ))
+
+            val mountInfo = try {
+                JSONObject(NativeMtpBridge.getMountInfo(serial))
+            } catch (_: Exception) { null }
+            val deviceName = mountInfo?.optString("device_name", "")?.ifBlank {
+                getDeviceDisplayName(serial)
+            } ?: getDeviceDisplayName(serial)
+
+            EventBus.emit(MtpEvent.DeviceAlbumCreated(
+                serial = serial,
+                manufacturer = manufacturer,
+                model = model,
+                mountPath = mountDir,
+                friendlyName = deviceName,
+            ))
+
+            return mountDir
+        } finally {
+            mountingSerials.remove(serial)
         }
+    }
 
-        mountPaths[serial] = mountDir
-        updateActivity(serial, DeviceActivity.Mounting(
-            deviceId = serial,
-            deviceName = name,
-        ))
-        _deviceStates.value = _deviceStates.value + (serial to MtpDeviceState.Mounting(
-            serial = serial,
-            manufacturer = manufacturer,
-            model = model,
-        ))
-
-        val mountInfo = try {
-            JSONObject(NativeMtpBridge.getMountInfo(serial))
-        } catch (_: Exception) { null }
-        val deviceName = mountInfo?.optString("device_name", "")?.ifBlank {
-            getDeviceDisplayName(serial)
-        } ?: getDeviceDisplayName(serial)
-
-        EventBus.emit(MtpEvent.DeviceAlbumCreated(
-            serial = serial,
-            manufacturer = manufacturer,
-            model = model,
-            mountPath = mountDir,
-            friendlyName = deviceName,
-        ))
-
-        return mountDir
+    override fun cancelConnection(deviceId: String) {
+        LinLogger.i("MtpProtocol", "cancelConnection: $deviceId")
+        suppressedSerials.add(deviceId)
+        serialJobs.remove(deviceId)?.cancel()
+        mountingSerials.remove(deviceId)
     }
 
     override fun establishConnection(deviceId: String) {
-        val state = _deviceStates.value[deviceId] as? MtpDeviceState ?: return
-        val manufacturer = state.manufacturer
-        val model = state.model
-        scope.launch {
+        val state = _deviceStates.value[deviceId] as? MtpDeviceState
+        val manufacturer = state?.manufacturer ?: ""
+        val model = state?.model ?: ""
+
+        suppressedSerials.remove(deviceId)
+        serialJobs[deviceId]?.cancel()
+        serialJobs[deviceId] = scope.launch {
             withContext(Dispatchers.IO) {
+                LinLogger.i("MtpProtocol", "establishConnection: $deviceId (manufacturer=$manufacturer, model=$model)")
                 _deviceStates.value = _deviceStates.value + (deviceId to MtpDeviceState.Detected(
                     serial = deviceId,
                     manufacturer = manufacturer,
@@ -495,6 +534,7 @@ class MtpProtocol(
     }
 
     private suspend fun handleDisconnect(serial: String) {
+        suppressedSerials.remove(serial)
         removeActivity(serial)
         _pendingUserActions.update { it - serial }
         _deviceDisconnected.tryEmit(serial)

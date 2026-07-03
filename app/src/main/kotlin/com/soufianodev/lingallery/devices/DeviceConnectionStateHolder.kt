@@ -59,6 +59,7 @@ class DeviceConnectionStateHolder(
             }
             DialogActionKind.CANCEL -> {
                 suppressedDevices.add(queued.deviceId)
+                deviceRepository.cancelConnection(queued.deviceId)
             }
             DialogActionKind.DISMISS -> { }
         }

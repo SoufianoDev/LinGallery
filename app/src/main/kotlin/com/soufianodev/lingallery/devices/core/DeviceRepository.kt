@@ -9,5 +9,6 @@ interface DeviceRepository {
     val pendingUserActions: StateFlow<Map<String, DeviceUserAction>>
     val deviceDisconnected: SharedFlow<String>
     fun establishConnection(deviceId: String)
+    fun cancelConnection(deviceId: String)
     fun getDeviceDisplayName(deviceId: String): String
 }

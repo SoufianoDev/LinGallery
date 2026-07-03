@@ -158,6 +158,15 @@ object NativeMtpBridge {
     fun onDeviceConnected(json: String) {
         val device = parseSingleDeviceJson(json) ?: return
         LinLogger.i("NativeMtpBridge", "Device connected: ${device.serial}")
+
+        // Clean up any stale state for this serial before overwriting
+        val stale = _deviceInfos.remove(device.serial)
+        if (stale != null) {
+            LinLogger.w("NativeMtpBridge", "Stale state found for ${device.serial} — cleaning up")
+            EventBus.emit(MtpEvent.DeviceCleanupComplete(serial = device.serial))
+        }
+        _accumulatedImages.remove(device.serial)
+
         _deviceInfos[device.serial] = DeviceInfo(
             serial = device.serial,
             manufacturer = device.manufacturer,
@@ -165,6 +174,7 @@ object NativeMtpBridge {
             mountPath = null,
             detectedAtNanos = device.detectedAtNanos,
         )
+
         EventBus.emit(
             MtpEvent.DeviceDetected(
                 serial = device.serial,
@@ -182,6 +192,7 @@ object NativeMtpBridge {
         } else {
             serialOrJson
         }
+        _accumulatedImages.remove(serial)
         val info = _deviceInfos.remove(serial)
         LinLogger.i("NativeMtpBridge", "Device disconnected: $serial")
         EventBus.emit(

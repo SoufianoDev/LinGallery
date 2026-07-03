@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use crate::lin_log;
 
 use std::ffi::OsStr;
@@ -627,7 +627,7 @@ async fn build_fast_index<F>(
 where
     F: Fn(&[ImageRecord], usize),
 {
-    let all_objects = match list_all_objects_by_format(device, storage, mount_path, storage_name, cancelled, on_progress, on_folder_batch).await {
+    let all_objects = match pits_traverse(device, storage, mount_path, storage_name, cancelled, on_progress, on_folder_batch).await {
         Some(objs) => objs,
         None => return Vec::new(),
     };
@@ -739,7 +739,36 @@ where
     all_records
 }
 
-async fn list_all_objects_by_format(
+/// A `WorkItem` represents a single directory to be explored by the PITS
+/// traversal loop. Every discovered directory is converted into one WorkItem
+/// and submitted to the work scheduler (a `VecDeque`), decoupling traversal
+/// management from execution and eliminating recursive calls entirely.
+struct WorkItem {
+    handle: ObjectHandle,
+    depth: u32,
+    name: String,
+    path: PathBuf,
+    /// When `true`, only child folders named "media" are enqueued.
+    /// Applied to the top-level "android/" directory so that only
+    /// `android/media/…` is traversed and `android/data/`, `android/obb/`,
+    /// etc. are excluded without inspecting their contents.
+    restrict_children_to_media: bool,
+}
+
+/// Parallel Incremental Traversal Strategy (PITS)
+///
+/// Replaces recursive MTP scanning with an explicit BFS work queue.
+/// Every discovered directory becomes an independent `WorkItem` submitted
+/// to a `VecDeque` scheduler. No recursive calls are made at any depth.
+///
+/// Discovered image files are forwarded to `on_folder_batch` and
+/// `on_progress` immediately as each directory is resolved, allowing the
+/// UI and indexing pipeline to process results before the full traversal
+/// completes (incremental processing).
+///
+/// Traversal order: Breadth-First Search — shallower folders are dequeued
+/// first (`pop_front`), so top-level albums appear in the UI sooner.
+async fn pits_traverse(
     device: &mtp_rs::MtpDevice,
     storage: &mtp_rs::Storage,
     mount_path: &Path,
@@ -747,177 +776,275 @@ async fn list_all_objects_by_format(
     cancelled: &AtomicBool,
     on_progress: Option<&(dyn Fn(usize) + Sync)>,
     on_folder_batch: Option<&(dyn Fn(&[ImageRecord]) + Sync)>,
-) -> Option<Vec<mtp_rs::ptp::ObjectInfo>> {
+) -> Option<Vec<ObjectInfo>> {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::sync::{Arc, Mutex};
+    use tokio::sync::Notify;
+
     let session = device.session();
     let storage_id = storage.id();
 
-    lin_log!(crate::lin_logger::LEVEL_DEBUG, "mtp_bridge", "Trial 1: GetObjectHandles(storage={}, format=ALL, parent=ALL)...", storage_id.0);
-    let root_objects: Vec<ObjectInfo> = match session.get_object_handles(storage_id, None, Some(mtp_rs::ObjectHandle::ALL)).await {
+    // ── Seed phase ────────────────────────────────────────────────────────
+    lin_log!(crate::lin_logger::LEVEL_DEBUG, "mtp_bridge",
+        "PITS seed: GetObjectHandles(storage={}, parent=ALL)...", storage_id.0);
+
+    let _seed_permit = mtp_io_sem().acquire().await.ok();
+    let root_objects: Vec<ObjectInfo> = match session
+        .get_object_handles(storage_id, None, Some(mtp_rs::ObjectHandle::ALL))
+        .await
+    {
         Ok(handles) if !handles.is_empty() => {
-            lin_log!(crate::lin_logger::LEVEL_DEBUG, "mtp_bridge", "  Got {} handles, fetching info...", handles.len());
+            lin_log!(crate::lin_logger::LEVEL_DEBUG, "mtp_bridge",
+                "  Seed: {} root handles, fetching info...", handles.len());
             let mut objects = Vec::with_capacity(handles.len());
             for handle in handles {
+                if cancelled.load(Ordering::Relaxed) { break; }
                 match session.get_object_info_full(handle).await {
                     Ok(mut info) => { info.handle = handle; objects.push(info); }
-                    Err(e) => lin_log!(crate::lin_logger::LEVEL_WARN, "mtp_bridge", "  GetObjectInfo(handle={}) failed: {}", handle.0, e),
+                    Err(e) => lin_log!(crate::lin_logger::LEVEL_WARN, "mtp_bridge",
+                        "  GetObjectInfo({}) failed: {}", handle.0, e),
                 }
             }
-            lin_log!(crate::lin_logger::LEVEL_DEBUG, "mtp_bridge", "  Trial 1 collected {} objects (all formats)", objects.len());
+            lin_log!(crate::lin_logger::LEVEL_DEBUG, "mtp_bridge",
+                "  Seed collected {} root objects", objects.len());
             objects
         }
-        Ok(_) => { lin_log!(crate::lin_logger::LEVEL_WARN, "mtp_bridge", "  Trial 1 returned 0 handles"); Vec::new() }
-        Err(e) => { lin_log!(crate::lin_logger::LEVEL_ERROR, "mtp_bridge", "  Trial 1 failed: {}", e); Vec::new() }
+        Ok(_) => {
+            lin_log!(crate::lin_logger::LEVEL_WARN, "mtp_bridge", "  Seed: 0 root handles");
+            Vec::new()
+        }
+        Err(e) => {
+            lin_log!(crate::lin_logger::LEVEL_ERROR, "mtp_bridge", "  Seed failed: {}", e);
+            Vec::new()
+        }
     };
+    drop(_seed_permit);
 
-    let trial1_image_count = root_objects.iter()
-        .filter(|obj| is_supported_image_object(obj))
+    if root_objects.is_empty() {
+        lin_log!(crate::lin_logger::LEVEL_ERROR, "mtp_bridge", "PITS: no objects at storage root");
+        return None;
+    }
+
+    let seed_image_count = root_objects.iter()
+        .filter(|o| is_supported_image_object(o))
         .count();
 
-    let mut all_objects: Vec<ObjectInfo> = Vec::new();
-    let mut visited: HashSet<u32> = HashSet::new();
-    let mut folders: Vec<(ObjectHandle, u32, String, PathBuf)> = Vec::new();
-    const MAX_DEPTH: u32 = 10;
+    // ── PITS Parallel BFS traversal ───────────────────────────────────────
+    let all_objects = Arc::new(Mutex::new(root_objects.clone()));
+    let visited: Arc<Mutex<HashSet<u32>>> = Arc::new(Mutex::new(
+        root_objects.iter().map(|o| o.handle.0).collect()
+    ));
 
+    let mut initial_queue = VecDeque::new();
     for obj in &root_objects {
         if obj.is_folder() && !is_skipped_folder(&obj.filename) {
-            folders.push((obj.handle, 1, obj.filename.clone(), mount_path.join(&obj.filename)));
+            let restrict = obj.filename.eq_ignore_ascii_case("android");
+            initial_queue.push_back(WorkItem {
+                handle: obj.handle,
+                depth: 1,
+                name: obj.filename.clone(),
+                path: mount_path.join(&obj.filename),
+                restrict_children_to_media: restrict,
+            });
         }
-        visited.insert(obj.handle.0);
-        all_objects.push(obj.clone());
     }
 
-    async fn retry_get_handles(
-        session: &mtp_rs::ptp::PtpSession,
-        storage_id: mtp_rs::ptp::StorageId,
-        folder: ObjectHandle,
-    ) -> Option<Vec<ObjectHandle>> {
-        for attempt in 0..3 {
-            tokio::time::sleep(std::time::Duration::from_millis(10 * (attempt as u64 + 1))).await;
-            match session.get_object_handles(storage_id, None, Some(folder)).await {
-                Ok(handles) => return Some(handles),
-                Err(_) if attempt < 2 => {
-                    lin_log!(crate::lin_logger::LEVEL_DEBUG, "mtp_bridge", "  retry_get_handles attempt {} failed, retrying...", attempt + 1);
-                }
-                Err(e) => {
-                    lin_log!(crate::lin_logger::LEVEL_ERROR, "mtp_bridge", "  retry_get_handles exhausted: {}", e);
-                    return None;
-                }
-            }
-        }
-        None
-    }
+    const MAX_DEPTH: u32 = 10;
+    lin_log!(crate::lin_logger::LEVEL_DEBUG, "mtp_bridge",
+        "PITS: {} initial work items (BFS, max_depth={})", initial_queue.len(), MAX_DEPTH);
 
-    if !folders.is_empty() {
-        lin_log!(crate::lin_logger::LEVEL_DEBUG, "mtp_bridge", "Trial 2: traversing {} folder(s) (max_depth={})...", folders.len(), MAX_DEPTH);
-        let mut cumulative_supported = 0usize;
-        let mut android_depth: Option<u32> = None;
+    let queue = Arc::new(Mutex::new(initial_queue));
+    let notify = Arc::new(Notify::new());
+    let active_workers = Arc::new(AtomicUsize::new(0));
+    let cumulative_supported = Arc::new(AtomicUsize::new(seed_image_count));
 
-        while let Some((fh, depth, folder_name, folder_path)) = folders.pop() {
-            if depth > MAX_DEPTH { continue; }
+    // Cap the worker pool to 2 to ensure at least 2 permits remain available
+    // for FUSE read operations, preventing the "slow read" timeout.
+    let num_workers = 2;
+    let mut workers = Vec::new();
 
-            if let Some(ad) = android_depth {
-                if depth <= ad {
-                    android_depth = None;
-                }
-            }
-            if depth == 1 && folder_name.eq_ignore_ascii_case("android") {
-                android_depth = Some(depth);
-            }
+    for worker_id in 0..num_workers {
+        let queue = Arc::clone(&queue);
+        let all_objects = Arc::clone(&all_objects);
+        let visited = Arc::clone(&visited);
+        let notify = Arc::clone(&notify);
+        let active_workers = Arc::clone(&active_workers);
+        let cumulative_supported = Arc::clone(&cumulative_supported);
 
-            lin_log!(crate::lin_logger::LEVEL_TRACE, "mtp_bridge", "  Visiting folder '{}' (depth={}, handle={})", folder_name, depth, fh.0);
+        // Copy references for the async block
+        let session = session;
+        let storage_id = storage_id;
+        let mount_path = mount_path;
+        let cancelled = cancelled;
+        let on_progress = on_progress;
+        let on_folder_batch = on_folder_batch;
 
-            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-            if cancelled.load(Ordering::Relaxed) { break; }
+        workers.push(async move {
+            loop {
+                if cancelled.load(Ordering::Relaxed) { break; }
 
-            let handles = match retry_get_handles(session, storage_id, fh).await {
-                Some(h) => h,
-                None => continue,
-            };
-
-            if handles.is_empty() { continue; }
-
-            let mut children: Vec<ObjectInfo> = Vec::new();
-            let mut has_nomedia = false;
-            for h in &handles {
-                if !visited.insert(h.0) { continue; }
-                match session.get_object_info_full(*h).await {
-                    Ok(mut info) => {
-                        info.handle = *h;
-                        if info.filename == ".nomedia" { has_nomedia = true; }
-                        children.push(info);
+                let notified = notify.notified();
+                let item = {
+                    let mut q = queue.lock().unwrap();
+                    if let Some(i) = q.pop_front() {
+                        Some(i)
+                    } else {
+                        if active_workers.load(Ordering::Relaxed) == 0 {
+                            break;
+                        }
+                        None
                     }
-                    Err(_) => {}
-                }
-            }
-            if has_nomedia { continue; }
+                };
 
-            let folder_image_count = children.iter().filter(|info| is_supported_image_object(info)).count();
-            if folder_image_count > 0 {
-                lin_log!(crate::lin_logger::LEVEL_DEBUG, "mtp_bridge", "  Folder '{}' contains {} supported images", folder_name, folder_image_count);
+                if let Some(item) = item {
+                    active_workers.fetch_add(1, Ordering::Relaxed);
 
-                if let Some(cb) = on_folder_batch {
-                    if cancelled.load(Ordering::Relaxed) { break; }
-                    let mut batch: Vec<ImageRecord> = Vec::with_capacity(folder_image_count);
-                    for obj in children.iter().filter(|info| is_supported_image_object(info)) {
-                        let mtime = obj.modified.as_ref()
-                            .map(datetime_to_ms)
-                            .unwrap_or(0);
-                        let mut virtual_path = folder_path.clone();
-                        virtual_path.push(&obj.filename);
-                        batch.push(ImageRecord {
-                            handle: obj.handle.0,
-                            storage_id: obj.storage_id.0,
-                            parent_handle: fh.0,
-                            filename: obj.filename.clone(),
-                            size: obj.size,
-                            mtime,
-                            virtual_path,
-                        });
-                    }
-                    if !batch.is_empty() {
-                        cb(&batch);
-                    }
-                }
-            }
-            cumulative_supported += folder_image_count;
-            let total_so_far = trial1_image_count + cumulative_supported;
-            if let Some(p) = on_progress {
-                p(total_so_far);
-            }
+                    if item.depth <= MAX_DEPTH {
+                        lin_log!(crate::lin_logger::LEVEL_TRACE, "mtp_bridge",
+                            "  PITS worker {} processing: '{}' depth={} handle={}", worker_id, item.name, item.depth, item.handle.0);
 
-            for info in children {
-                let is_folder = info.is_folder();
-                if is_folder && depth < MAX_DEPTH {
-                    let should_recurse = match android_depth {
-                        Some(ad) => {
-                            let rel_depth = depth - ad;
-                            if rel_depth == 0 {
-                                info.filename.eq_ignore_ascii_case("media")
-                            } else {
-                                true
+                        // Acquire semaphore permit BEFORE MTP calls to prevent FUSE starvation
+                        let _permit = mtp_io_sem().acquire().await.ok();
+
+                        if let Some(handles) = pits_retry_get_handles(session, storage_id, item.handle).await {
+                            if !handles.is_empty() {
+                                let mut children: Vec<ObjectInfo> = Vec::new();
+                                let mut has_nomedia = false;
+                                
+                                for h in &handles {
+                                    if cancelled.load(Ordering::Relaxed) { break; }
+                                    let is_new = { visited.lock().unwrap().insert(h.0) };
+                                    if !is_new { continue; }
+                                    
+                                    if let Ok(mut info) = session.get_object_info_full(*h).await {
+                                        info.handle = *h;
+                                        if info.filename == ".nomedia" { has_nomedia = true; }
+                                        children.push(info);
+                                    }
+                                }
+
+                                if !has_nomedia {
+                                    let folder_image_count = children.iter()
+                                        .filter(|info| is_supported_image_object(info))
+                                        .count();
+
+                                    if folder_image_count > 0 {
+                                        lin_log!(crate::lin_logger::LEVEL_DEBUG, "mtp_bridge",
+                                            "  '{}' → {} images (worker {})", item.name, folder_image_count, worker_id);
+
+                                        if let Some(cb) = on_folder_batch {
+                                            if !cancelled.load(Ordering::Relaxed) {
+                                                let mut batch: Vec<ImageRecord> = Vec::with_capacity(folder_image_count);
+                                                for obj in children.iter().filter(|info| is_supported_image_object(info)) {
+                                                    let mtime = obj.modified.as_ref().map(datetime_to_ms).unwrap_or(0);
+                                                    let mut virtual_path = item.path.clone();
+                                                    virtual_path.push(&obj.filename);
+                                                    batch.push(ImageRecord {
+                                                        handle: obj.handle.0,
+                                                        storage_id: obj.storage_id.0,
+                                                        parent_handle: item.handle.0,
+                                                        filename: obj.filename.clone(),
+                                                        size: obj.size,
+                                                        mtime,
+                                                        virtual_path,
+                                                    });
+                                                }
+                                                if !batch.is_empty() {
+                                                    cb(&batch);
+                                                }
+                                            }
+                                        }
+                                    }
+
+                                    let prev = cumulative_supported.fetch_add(folder_image_count, Ordering::Relaxed);
+                                    if let Some(p) = on_progress {
+                                        p(prev + folder_image_count);
+                                    }
+
+                                    let mut q = queue.lock().unwrap();
+                                    for child in &children {
+                                        let is_folder = child.is_folder();
+                                        if is_folder && item.depth < MAX_DEPTH {
+                                            let should_enqueue = if item.restrict_children_to_media {
+                                                child.filename.eq_ignore_ascii_case("media")
+                                            } else {
+                                                !is_skipped_folder(&child.filename)
+                                            };
+                                            if should_enqueue {
+                                                q.push_back(WorkItem {
+                                                    handle: child.handle,
+                                                    depth: item.depth + 1,
+                                                    name: child.filename.clone(),
+                                                    path: item.path.join(&child.filename),
+                                                    restrict_children_to_media: false,
+                                                });
+                                            }
+                                        }
+                                    }
+                                    drop(q);
+
+                                    all_objects.lock().unwrap().extend(children);
+                                }
                             }
                         }
-                        None => !is_skipped_folder(&info.filename),
-                    };
-                    if should_recurse {
-                        let child_path = folder_path.join(&info.filename);
-                        folders.push((info.handle, depth + 1, info.filename.clone(), child_path));
                     }
-                }
-                all_objects.push(info);
-            }
-        }
 
-        let children = all_objects.len().saturating_sub(root_objects.len());
-        lin_log!(crate::lin_logger::LEVEL_DEBUG, "mtp_bridge", "Trial 2: {} children collected ({} total)", children, all_objects.len());
+                    active_workers.fetch_sub(1, Ordering::Relaxed);
+                    notify.notify_waiters();
+                } else {
+                    notified.await;
+                }
+            }
+        });
     }
 
-    if all_objects.is_empty() {
-        lin_log!(crate::lin_logger::LEVEL_ERROR, "mtp_bridge", "All MTP listing attempts exhausted");
+    futures::future::join_all(workers).await;
+
+    let all_objects_final = match Arc::try_unwrap(all_objects) {
+        Ok(mutex) => mutex.into_inner().unwrap(),
+        Err(arc) => arc.lock().unwrap().clone(),
+    };
+    
+    let child_count = all_objects_final.len().saturating_sub(root_objects.len());
+    let final_supported = cumulative_supported.load(Ordering::Relaxed);
+    
+    lin_log!(crate::lin_logger::LEVEL_DEBUG, "mtp_bridge",
+        "PITS done: {} child objects ({} total, {} supported images)",
+        child_count, all_objects_final.len(), final_supported);
+
+    if all_objects_final.is_empty() {
+        lin_log!(crate::lin_logger::LEVEL_ERROR, "mtp_bridge",
+            "PITS: traversal yielded no objects");
         None
     } else {
-        Some(all_objects)
+        Some(all_objects_final)
     }
+}
+
+/// Attempts to list the children of `folder` with up to 3 retries.
+/// Backoff grows linearly (10 ms, 20 ms, 30 ms) to give the device
+/// time to recover from transient I/O errors.
+async fn pits_retry_get_handles(
+    session: &mtp_rs::ptp::PtpSession,
+    storage_id: StorageId,
+    folder: ObjectHandle,
+) -> Option<Vec<ObjectHandle>> {
+    for attempt in 0..3u64 {
+        tokio::time::sleep(Duration::from_millis(10 * (attempt + 1))).await;
+        match session.get_object_handles(storage_id, None, Some(folder)).await {
+            Ok(handles) => return Some(handles),
+            Err(_) if attempt < 2 => {
+                lin_log!(crate::lin_logger::LEVEL_DEBUG, "mtp_bridge",
+                    "  pits_retry_get_handles attempt {} failed, retrying...", attempt + 1);
+            }
+            Err(e) => {
+                lin_log!(crate::lin_logger::LEVEL_ERROR, "mtp_bridge",
+                    "  pits_retry_get_handles exhausted: {}", e);
+                return None;
+            }
+        }
+    }
+    None
 }
 
 impl Filesystem for LazyGalleryFs {
@@ -1078,8 +1205,8 @@ impl Filesystem for LazyGalleryFs {
                         lin_log!(
                             crate::lin_logger::LEVEL_WARN,
                             "mtp_bridge",
-                            "slow read: {}ms",
-                            elapsed.as_millis()
+                            "slow read: {}",
+                            crate::lin_logger::format_duration(elapsed.as_millis() as u64)
                         );
                     }
                     reply.data(&data);
@@ -1667,7 +1794,7 @@ fn indexing_thread(
             || di.manufacturer.to_lowercase().contains("samsung");
         let restricted = count == 0 && is_samsung;
 
-        lin_log!(crate::lin_logger::LEVEL_INFO, "mtp_bridge", "Indexing complete for {}: {} images in {}ms (restricted={})", serial, count, elapsed, restricted);
+        lin_log!(crate::lin_logger::LEVEL_INFO, "mtp_bridge", "Indexing complete for {}: {} images in {} (restricted={})", serial, count, crate::lin_logger::format_duration(elapsed as u64), restricted);
 
         let trial2_total = trial2_cumulative.load(Ordering::Relaxed);
         if trial2_total > 0 && trial2_total != count {

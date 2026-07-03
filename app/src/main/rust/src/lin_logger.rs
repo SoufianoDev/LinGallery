@@ -30,6 +30,24 @@ pub fn set_file_logging(enabled: bool) {
     FILE_LOGGING.store(enabled, Ordering::Release);
 }
 
+pub fn format_duration(ms: u64) -> String {
+    let days = ms / 86400000;
+    let hours = (ms % 86400000) / 3600000;
+    let minutes = (ms % 3600000) / 60000;
+    let seconds = (ms % 60000) / 1000;
+    let millis = ms % 1000;
+
+    match (days, hours, minutes, seconds) {
+        (0, 0, 0, 0) => format!("{}ms", millis),
+        (0, 0, 0, s) if millis == 0 => format!("{}s", s),
+        (0, 0, 0, s) => format!("{}s {}ms", s, millis),
+        (0, 0, m, s) if millis == 0 => format!("{}m {}s", m, s),
+        (0, 0, m, s) => format!("{}m {}s {}ms", m, s, millis),
+        (0, h, m, s) => format!("{}h {}m {}s", h, m, s),
+        (d, h, _, _) => format!("{}d {}h", d, h),
+    }
+}
+
 fn level_str(level: jint) -> &'static str {
     match level {
         0 => "TRACE",

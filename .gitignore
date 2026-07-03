@@ -33,4 +33,4 @@ app/bin/
 *.obj
 Thumbs.db
 app/src/main/kotlin/com/soufianodev/lingallery/app/CrashDialogTest.kt
-
+reports/*
