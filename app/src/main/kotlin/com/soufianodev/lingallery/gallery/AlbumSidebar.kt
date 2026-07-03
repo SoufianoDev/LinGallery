@@ -24,7 +24,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.soufianodev.lingallery.app.Strings
-import com.soufianodev.lingallery.devices.ui.SidebarBadge
 import com.soufianodev.lingallery.model.Album
 import com.soufianodev.lingallery.app.AppConst
 import com.soufianodev.lingallery.ui.icons.AppIcons
@@ -38,7 +37,6 @@ fun AlbumSidebar(
     currentAlbumIndex: Int,
     onAlbumSelected: (Int) -> Unit,
     isDark: Boolean,
-    badges: List<SidebarBadge> = emptyList(),
     deviceMounts: Set<Path> = emptySet(),
     modifier: Modifier = Modifier
 ) {
@@ -137,17 +135,6 @@ fun AlbumSidebar(
                                 maxLines = 1,
                                 overflow = TextOverflow.Ellipsis,
                                 modifier = Modifier.weight(1f)
-                            )
-                        }
-                        val hasActiveBadge = album.isDeviceAlbum &&
-                            badges.any { it.isSpinning }
-                        val isTransitioning = album.statusIsTransition && isDeviceMount
-                        if (hasActiveBadge || isTransitioning) {
-                            Spacer(Modifier.width(6.dp))
-                            CircularProgressIndicator(
-                                modifier = Modifier.size(14.dp),
-                                strokeWidth = 2.dp,
-                                color = primary
                             )
                         }
                     }

@@ -42,16 +42,14 @@ fun GalleryScreen(
     val outlineVariant = if (isDark) DarkPalette.OUTLINE_VARIANT else LightPalette.OUTLINE_VARIANT
 
     val statusMessage by stateHolder.statusMessage.collectAsState()
-    val badges = remember(deviceActivity) { activityPresenter.toSidebarBadges(deviceActivity) }
     val statusBarActivityText = remember(deviceActivity) { activityPresenter.toStatusBarText(deviceActivity) }
-    val displayText = statusBarActivityText ?: statusMessage.ifEmpty { "Ready" }
+    val displayText = albumDisplayText(statusBarActivityText, statusMessage, state)
 
     Column(modifier = Modifier.fillMaxSize().background(bg)) {
         Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
             AlbumSidebar(
                 albums = state.albums,
                 currentAlbumIndex = state.currentAlbumIndex,
-                badges = badges,
                 onAlbumSelected = { index ->
                     val prevAlbum = state.albums.getOrNull(state.currentAlbumIndex)
                     if (prevAlbum?.isDeviceAlbum == true) {
@@ -178,4 +176,20 @@ fun GalleryScreen(
             }
         }
     }
+}
+
+private fun albumDisplayText(
+    activityText: String?,
+    statusMessage: String,
+    state: GalleryUiState
+): String {
+    activityText?.let { return it }
+    val album = state.currentAlbum ?: return statusMessage.ifEmpty { "Ready" }
+    if (album.isDeviceAlbum) {
+        val count = album.imageCount
+        return if (count == 1) "${album.name} (1 photo)" else "${album.name} ($count photos)"
+    }
+    val totalAlbums = state.albums.size
+    val totalImages = state.albums.sumOf { it.images.size }
+    return "$totalAlbums albums, $totalImages images"
 }
