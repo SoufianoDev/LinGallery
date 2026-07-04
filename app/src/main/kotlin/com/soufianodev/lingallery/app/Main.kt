@@ -69,7 +69,7 @@ fun main() = application {
         state = windowState
     ) {
         val density = LocalDensity.current
-        val minWindowWidth = with(density) { 480.dp.roundToPx() }
+        val minWindowWidth = with(density) { 360.dp.roundToPx() }
         val minWindowHeight = with(density) { 340.dp.roundToPx() }
         SideEffect {
             window.minimumSize = Dimension(minWindowWidth, minWindowHeight)

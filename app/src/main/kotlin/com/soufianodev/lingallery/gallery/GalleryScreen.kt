@@ -9,6 +9,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
@@ -45,7 +46,7 @@ fun GalleryScreen(
     val statusBarActivityText = remember(deviceActivity) { activityPresenter.toStatusBarText(deviceActivity) }
     val displayText = albumDisplayText(statusBarActivityText, statusMessage, state)
 
-    Column(modifier = Modifier.fillMaxSize().background(bg)) {
+    Column(modifier = Modifier.fillMaxSize().background(bg).clipToBounds()) {
         Row(modifier = Modifier.weight(1f).fillMaxWidth()) {
             AlbumSidebar(
                 albums = state.albums,
@@ -72,7 +73,7 @@ fun GalleryScreen(
                     .background(outlineVariant)
             )
 
-            Column(modifier = Modifier.weight(1f).fillMaxHeight()) {
+            Column(modifier = Modifier.weight(1f).fillMaxHeight().clipToBounds()) {
                 Surface(
                     modifier = Modifier.fillMaxWidth().height(AppConst.TOP_BAR_HEIGHT.dp),
                     color = surface
@@ -110,7 +111,7 @@ fun GalleryScreen(
                     LinearProgressIndicator(modifier = Modifier.fillMaxWidth())
                 }
 
-                Box(modifier = Modifier.weight(1f).fillMaxWidth()) {
+                Box(modifier = Modifier.weight(1f).fillMaxWidth().clipToBounds()) {
                     val currentAlbum = state.currentAlbum
                     val showScanning = state.isScanning
                         && (currentAlbum == null || (currentAlbum.images.isEmpty() && !currentAlbum.isDeviceAlbum))

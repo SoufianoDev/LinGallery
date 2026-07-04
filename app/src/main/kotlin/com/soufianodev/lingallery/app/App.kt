@@ -8,6 +8,7 @@ import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.unit.dp
 import com.soufianodev.lingallery.devices.core.DeviceUiEffect
 import com.soufianodev.lingallery.devices.ui.DialogActionKind
@@ -159,7 +160,7 @@ fun App(module: AppModule) {
         }
     }
 
-    Box(modifier = Modifier.fillMaxSize()) {
+    Box(modifier = Modifier.fillMaxSize().clipToBounds()) {
         GalleryScreen(
             stateHolder = module.galleryStateHolder,
             deviceMounts = deviceMounts,
@@ -225,7 +226,7 @@ fun App(module: AppModule) {
         }
 
         Box(
-            modifier = Modifier.fillMaxSize(),
+            modifier = Modifier.fillMaxSize().clipToBounds(),
             contentAlignment = Alignment.TopCenter
         ) {
             val snackbarData = snackbarHostState.currentSnackbarData

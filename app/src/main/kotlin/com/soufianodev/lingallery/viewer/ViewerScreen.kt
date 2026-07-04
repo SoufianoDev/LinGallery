@@ -30,6 +30,7 @@ import com.soufianodev.lingallery.app.Strings
 import com.soufianodev.lingallery.gallery.CropRect
 import com.soufianodev.lingallery.ui.component.TooltipIconButton
 import com.soufianodev.lingallery.ui.component.stablePointerHoverIcon
+import androidx.compose.ui.draw.clipToBounds
 import androidx.compose.ui.graphics.graphicsLayer
 import com.soufianodev.lingallery.ui.icons.AppIcons
 import com.soufianodev.lingallery.ui.theme.DarkPalette
@@ -240,6 +241,7 @@ fun ViewerScreen(
         modifier = Modifier
             .fillMaxSize()
             .background(bg)
+            .clipToBounds()
             .focusTarget()
             .focusRequester(focusRequester)
             .onPreviewKeyEvent { event ->
@@ -252,7 +254,7 @@ fun ViewerScreen(
             }
             .onKeyEvent(::handleKeyEvent)
     ) {
-        Column(modifier = Modifier.fillMaxSize().background(bg)) {
+        Column(modifier = Modifier.fillMaxSize().background(bg).clipToBounds()) {
             Surface(
                 modifier = Modifier
                     .fillMaxWidth()

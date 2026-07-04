@@ -50,7 +50,7 @@ fun AlbumSidebar(
 
     Column(
         modifier = modifier
-            .width(AppConst.SIDEBAR_WIDTH.dp)
+            .widthIn(min = 180.dp, max = AppConst.SIDEBAR_WIDTH.dp)
             .fillMaxHeight()
             .background(surface)
     ) {

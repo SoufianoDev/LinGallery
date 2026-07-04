@@ -35,6 +35,7 @@ import androidx.compose.ui.draw.drawBehind
 import androidx.compose.ui.geometry.CornerRadius
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import com.soufianodev.lingallery.app.Strings
 import com.soufianodev.lingallery.ui.theme.DarkPalette
@@ -106,7 +107,7 @@ fun LinGallerySnackbar(
 
             Box(
                 modifier = Modifier
-                    .widthIn(min = 320.dp)
+                    .widthIn(min = 200.dp, max = 520.dp)
                     .border(1.dp, borderColor, RoundedCornerShape(cornerRadius))
                     .background(DarkPalette.SURFACE_VARIANT, RoundedCornerShape(cornerRadius))
             ) {
@@ -142,13 +143,17 @@ fun LinGallerySnackbar(
                                         text  = title.ifEmpty { message },
                                         color = DarkPalette.ON_SURFACE,
                                         style = MaterialTheme.typography.bodyLarge,
-                                        fontWeight = FontWeight.SemiBold
+                                        fontWeight = FontWeight.SemiBold,
+                                        maxLines = 2,
+                                        overflow = TextOverflow.Ellipsis
                                     )
                                     Spacer(modifier = Modifier.height(4.dp))
                                     Text(
                                         text  = details,
                                         color = DarkPalette.ON_SURFACE_VARIANT,
-                                        style = MaterialTheme.typography.bodyMedium
+                                        style = MaterialTheme.typography.bodyMedium,
+                                        maxLines = 3,
+                                        overflow = TextOverflow.Ellipsis
                                     )
                                 }
                                 if (isDismissible && (showCloseButton || !effectiveAutoClose)) {
@@ -184,7 +189,9 @@ fun LinGallerySnackbar(
                                 Text(
                                     text  = message,
                                     color = DarkPalette.ON_SURFACE,
-                                    style = MaterialTheme.typography.bodyLarge
+                                    style = MaterialTheme.typography.bodyLarge,
+                                    maxLines = 2,
+                                    overflow = TextOverflow.Ellipsis
                                 )
                                 if (isDismissible && (showCloseButton || !effectiveAutoClose)) {
                                     Spacer(Modifier.width(8.dp))
