@@ -96,30 +96,29 @@ fn replace_document(doc: &mut SvgDocument, new_source: String) -> bool {
 }
 
 fn apply_transform_to_source(source: &str, transform_str: &str) -> String {
-    // Try to wrap the root <svg> element's children in a <g> with the given transform.
-    // Strategy: find the <svg> open tag, insert a <g transform="..."> after it,
-    // and close the </g> before </svg>.
+    if let Some(idx) = source.find("<g id=\"_lingallery_transform\" transform=\"") {
+        let val_start = idx + "<g id=\"_lingallery_transform\" transform=\"".len();
+        if let Some(quote_end) = source[val_start..].find('"') {
+            let existing = &source[val_start..val_start + quote_end];
+            let new_transform = format!("{} {}", transform_str, existing);
+            let mut result = source.to_string();
+            result.replace_range(val_start..val_start + quote_end, &new_transform);
+            return result;
+        }
+    }
 
-    // We need to handle self-closing svg (unlikely but possible) and nested svg.
-    // Simple approach: find the first <svg...> tag, find matching </svg>,
-    // insert <g> after the opening svg tag and </g> before the closing </svg>.
-
-    // A more robust approach: find the root svg element and its content area.
     if let Some(svg_open_end) = find_svg_open_end(source) {
         if let Some(svg_close_start) = source.rfind("</svg>") {
-            // svg_open_end points to '>' of opening <svg>
             let after_open = svg_open_end + 1;
-            // Check if svg element is self-closing
             if source[..after_open].ends_with("/>") {
-                // Self-closing: <svg ... /> → <svg ...><g transform="..."/></svg>
                 let result = format!(
                     "{}{}</svg>",
-                    &source[..after_open - 2], // remove '/>'
-                    format!("><g transform=\"{}\"/>", transform_str)
+                    &source[..after_open - 2],
+                    format!("><g id=\"_lingallery_transform\" transform=\"{}\"/>", transform_str)
                 );
                 return result;
             }
-            let g_open = format!("<g transform=\"{}\">", transform_str);
+            let g_open = format!("<g id=\"_lingallery_transform\" transform=\"{}\">", transform_str);
             let g_close = "</g>";
             let mut result = String::with_capacity(source.len() + g_open.len() + g_close.len());
             result.push_str(&source[..after_open]);
@@ -130,12 +129,10 @@ fn apply_transform_to_source(source: &str, transform_str: &str) -> String {
             return result;
         }
     }
-    // Fallback: return source unchanged
     source.to_string()
 }
 
 fn find_svg_open_end(source: &str) -> Option<usize> {
-    // Find '<svg' (not inside another tag)
     let bytes = source.as_bytes();
     let len = bytes.len();
     let mut i = 0;
@@ -147,10 +144,7 @@ fn find_svg_open_end(source: &str) -> Option<usize> {
                 || (i + 6 <= len && &bytes[i + 1..i + 6] == b"svg\r")
                 || (i + 6 <= len && &bytes[i + 1..i + 6] == b"svg\t")
             {
-                // Check it's actually a tag start (preceded by <)
-                // Find the closing '>' of this tag
                 let start = i;
-                // Skip past attribute content to find matching >
                 let mut depth = 0u32;
                 let mut in_quote = false;
                 let mut quote_char = 0u8;
@@ -178,7 +172,6 @@ fn find_svg_open_end(source: &str) -> Option<usize> {
                 }
                 return None;
             }
-            // Skip to end of this tag
             while i < len && bytes[i] != b'>' {
                 i += 1;
             }
@@ -188,8 +181,6 @@ fn find_svg_open_end(source: &str) -> Option<usize> {
     None
 }
 
-/// Modify SVG source by setting a new viewBox (in viewBox coordinate space) and
-/// physical width/height on the <svg> element.
 fn modify_viewbox_in_source(
     source: &str,
     vx: f32,
@@ -211,7 +202,6 @@ fn modify_viewbox_in_source(
         result = replace_viewbox_attr(&result, &new_vb);
     }
 
-    // Update width and height to physical crop size
     let new_w = format!("width=\"{:.1}\"", pw);
     let new_h = format!("height=\"{:.1}\"", ph);
     result = replace_svg_attr(&result, "width", &new_w);
@@ -221,14 +211,14 @@ fn modify_viewbox_in_source(
 }
 
 fn has_viewbox_attr(source: &str) -> bool {
-    source.contains("viewBox")
+    let svg_tag_end = find_svg_open_end(source).unwrap_or(0);
+    let tag_content = &source[..svg_tag_end + 1];
+    tag_content.to_ascii_lowercase().contains("viewbox")
 }
 
 fn find_svg_tag_insert_pos(source: &str) -> Option<usize> {
-    // Find the position after the tag name to insert attributes
     if let Some(svg_start) = source.find("<svg") {
-        // Find end of tag name (first space, newline, or > or / after <svg)
-        let after_name = svg_start + 4; // after "svg"
+        let after_name = svg_start + 4;
         Some(after_name)
     } else {
         None
@@ -236,26 +226,21 @@ fn find_svg_tag_insert_pos(source: &str) -> Option<usize> {
 }
 
 fn replace_svg_attr(source: &str, attr_name: &str, new_value: &str) -> String {
-    // Simple replacement: find `attr_name="old"` in the first <svg...> tag
     let svg_tag_end = find_svg_open_end(source).unwrap_or(0);
     let tag_content = &source[..svg_tag_end + 1];
 
-    // Find the attribute in the tag
     let search_for = |name: &str| -> Option<(usize, usize)> {
         let tag_bytes = tag_content.as_bytes();
         let name_bytes = name.as_bytes();
         let tag_len = tag_bytes.len();
         let mut i = 0;
         while i < tag_len {
-            // Look for the attribute name preceded by a space/newline
             if is_space_or_quote(tag_bytes[i])
                 && i + name_bytes.len() < tag_len
-                && &tag_bytes[i + 1..i + 1 + name_bytes.len()] == name_bytes
+                && tag_bytes[i + 1..i + 1 + name_bytes.len()].eq_ignore_ascii_case(name_bytes)
             {
-                // Found attribute name, now find the = sign and value
                 let val_start = i + 1 + name_bytes.len();
                 if val_start < tag_len && tag_bytes[val_start] == b'=' {
-                    // Find the value delimiters
                     let quote_start = val_start + 1;
                     if quote_start < tag_len
                         && (tag_bytes[quote_start] == b'"' || tag_bytes[quote_start] == b'\'')
@@ -266,7 +251,7 @@ fn replace_svg_attr(source: &str, attr_name: &str, new_value: &str) -> String {
                             val_end += 1;
                         }
                         if val_end < tag_len {
-                            return Some((i + 1, val_end + 1)); // from attr name start to after closing quote
+                            return Some((i + 1, val_end + 1));
                         }
                     }
                 }
@@ -285,8 +270,6 @@ fn replace_svg_attr(source: &str, attr_name: &str, new_value: &str) -> String {
             result
         }
         None => {
-            // Attribute not found, insert it before the > of the svg tag
-            // Find the '>' of the opening svg tag
             let insert_pos = if let Some(pos) = tag_content.rfind('>') {
                 if pos > 0 && tag_content.as_bytes().get(pos - 1) == Some(&b'/') {
                     pos - 1
@@ -311,19 +294,15 @@ fn is_space_or_quote(b: u8) -> bool {
 }
 
 fn replace_viewbox_attr(source: &str, new_vb: &str) -> String {
-    // More robust: find viewBox=... and replace
     let bytes = source.as_bytes();
-    let vb_bytes = b"viewBox";
+    let vb_bytes = b"viewbox";
     let len = bytes.len();
     let mut i = 0;
     while i + vb_bytes.len() < len {
-        if &bytes[i..i + vb_bytes.len()] == vb_bytes {
-            // Check it's a word boundary (preceded by space or start)
+        if bytes[i..i + vb_bytes.len()].eq_ignore_ascii_case(vb_bytes) {
             if i == 0 || is_space_or_quote(bytes[i - 1]) {
-                // Check it's followed by =
                 let after = i + vb_bytes.len();
                 if after < len && bytes[after] == b'=' {
-                    // Find the value delimiters
                     let quote_start = after + 1;
                     if quote_start < len
                         && (bytes[quote_start] == b'"' || bytes[quote_start] == b'\'')
@@ -334,7 +313,7 @@ fn replace_viewbox_attr(source: &str, new_vb: &str) -> String {
                             val_end += 1;
                         }
                         if val_end < len {
-                            val_end += 1; // include closing quote
+                            val_end += 1;
                             let mut result = String::with_capacity(source.len());
                             result.push_str(&source[..i]);
                             result.push_str(new_vb);

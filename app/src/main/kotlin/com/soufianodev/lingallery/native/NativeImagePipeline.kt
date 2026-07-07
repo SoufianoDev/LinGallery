@@ -23,8 +23,13 @@ data class DecodedImageDto(
     val pixels: ByteArray,
 ) {
     fun toOwnedImage(): OwnedSkiaImage {
+        val alphaType = if (role == ImagePipelineRole.SVG_VIEWER || role == ImagePipelineRole.SVG_THUMBNAIL) {
+            ColorAlphaType.PREMUL
+        } else {
+            ColorAlphaType.UNPREMUL
+        }
         val info = ImageInfo(
-            ColorInfo(ColorType.RGBA_8888, ColorAlphaType.UNPREMUL, null),
+            ColorInfo(ColorType.RGBA_8888, alphaType, null),
             decodedWidth,
             decodedHeight
         )
