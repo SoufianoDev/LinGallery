@@ -138,39 +138,37 @@ fn find_svg_open_end(source: &str) -> Option<usize> {
     let mut i = 0;
     while i < len {
         if bytes[i] == b'<' {
-            if i + 5 <= len && &bytes[i + 1..i + 5] == b"svg "
-                || (i + 5 <= len && &bytes[i + 1..i + 5] == b"svg>")
-                || (i + 6 <= len && &bytes[i + 1..i + 6] == b"svg\n")
-                || (i + 6 <= len && &bytes[i + 1..i + 6] == b"svg\r")
-                || (i + 6 <= len && &bytes[i + 1..i + 6] == b"svg\t")
-            {
-                let start = i;
-                let mut depth = 0u32;
-                let mut in_quote = false;
-                let mut quote_char = 0u8;
-                for j in start..len {
-                    if in_quote {
-                        if bytes[j] == quote_char {
-                            in_quote = false;
-                        }
-                        continue;
-                    }
-                    match bytes[j] {
-                        b'"' | b'\'' => {
-                            in_quote = true;
-                            quote_char = bytes[j];
-                        }
-                        b'<' => depth += 1,
-                        b'>' => {
-                            if depth == 1 {
-                                return Some(j);
+            if i + 4 <= len && &bytes[i + 1..i + 4] == b"svg" {
+                let next_char = if i + 4 < len { bytes[i + 4] } else { b'>' };
+                if next_char == b' ' || next_char == b'\n' || next_char == b'\r' || next_char == b'\t' || next_char == b'>' {
+                    let start = i;
+                    let mut depth = 0u32;
+                    let mut in_quote = false;
+                    let mut quote_char = 0u8;
+                    for j in start..len {
+                        if in_quote {
+                            if bytes[j] == quote_char {
+                                in_quote = false;
                             }
-                            depth = depth.saturating_sub(1);
+                            continue;
                         }
-                        _ => {}
+                        match bytes[j] {
+                            b'"' | b'\'' => {
+                                in_quote = true;
+                                quote_char = bytes[j];
+                            }
+                            b'<' => depth += 1,
+                            b'>' => {
+                                if depth == 1 {
+                                    return Some(j);
+                                }
+                                depth = depth.saturating_sub(1);
+                            }
+                            _ => {}
+                        }
                     }
+                    return None;
                 }
-                return None;
             }
             while i < len && bytes[i] != b'>' {
                 i += 1;
@@ -828,5 +826,38 @@ pub extern "system" fn Java_com_soufianodev_lingallery_native_NativeSvgPipeline_
         } else {
             JNI_FALSE
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_crop_svg_with_newlines() {
+        let source = r#"<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<svg
+   width="600pt"
+   height="600pt"
+   viewBox="0 0 600 600"
+   version="1.1"
+   id="svg15"
+   xmlns="http://www.w3.org/2000/svg">
+  <rect width="100" height="100" />
+</svg>"#;
+
+        let (_tree, size) = parse_svg(source).unwrap();
+        assert_eq!(size, (800.0, 800.0));
+
+        let open_end = find_svg_open_end(source);
+        assert!(open_end.is_some());
+        let tag_content = &source[..open_end.unwrap() + 1];
+
+        let parsed_vb = parse_attrib_viewbox(tag_content);
+        assert_eq!(parsed_vb, Some((0.0, 0.0, 600.0, 600.0)));
+
+        let new_source = modify_viewbox_in_source(source, 0.0, 0.0, 300.0, 300.0, 400.0, 400.0);
+        let parsed = parse_svg(&new_source);
+        assert!(parsed.is_some(), "Should parse modified source");
     }
 }
