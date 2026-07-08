@@ -19,8 +19,11 @@ import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withContext
 import java.nio.file.Files
+import java.util.concurrent.ConcurrentHashMap
 import java.nio.file.Path
 import java.nio.file.attribute.FileTime
 
@@ -64,6 +67,7 @@ class ViewerStateHolder(
     private val _uiState = MutableStateFlow(ViewerUiState())
     val uiState: StateFlow<ViewerUiState> = _uiState.asStateFlow()
 
+    private val fileEditLocks = ConcurrentHashMap<String, Mutex>()
     private var _lastTrashPath: Path? = null
     private var _lastImagePath: Path? = null
     private var _lastAlbumWasCurrent: Boolean = false
@@ -221,7 +225,9 @@ class ViewerStateHolder(
 
     fun rotate(degrees: Int, onResult: (Boolean) -> Unit = {}) {
         val image = _uiState.value.currentImage ?: return
+        val lock = fileEditLocks.getOrPut(image.path.toString()) { Mutex() }
         scope.launch {
+            lock.withLock {
             val ok = if (image.extension.lowercase() == ".svg") {
                 val handle = _uiState.value.svgDocumentHandle
                 if (handle < 0L) false
@@ -237,12 +243,15 @@ class ViewerStateHolder(
                 resetView()
             }
             onResult(ok)
+            }
         }
     }
 
     fun flip(onResult: (Boolean) -> Unit = {}) {
         val image = _uiState.value.currentImage ?: return
+        val lock = fileEditLocks.getOrPut(image.path.toString()) { Mutex() }
         scope.launch {
+            lock.withLock {
             val ok = if (image.extension.lowercase() == ".svg") {
                 val handle = _uiState.value.svgDocumentHandle
                 if (handle < 0L) false
@@ -258,6 +267,7 @@ class ViewerStateHolder(
                 resetView()
             }
             onResult(ok)
+            }
         }
     }
 
@@ -266,7 +276,9 @@ class ViewerStateHolder(
         val rect = s.cropRect ?: return
         val image = s.currentImage ?: return
         if (!rect.isValid()) return
+        val lock = fileEditLocks.getOrPut(image.path.toString()) { Mutex() }
         scope.launch {
+            lock.withLock {
             val ok = if (image.extension.lowercase() == ".svg") {
                 val handle = _uiState.value.svgDocumentHandle
                 if (handle < 0L) false
@@ -294,6 +306,7 @@ class ViewerStateHolder(
                 _uiState.value = _uiState.value.copy(isCropping = false, cropRect = null)
             }
             onResult(ok)
+            }
         }
     }
 
