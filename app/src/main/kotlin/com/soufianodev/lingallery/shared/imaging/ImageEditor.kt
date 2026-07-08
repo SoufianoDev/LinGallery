@@ -13,6 +13,8 @@ import com.sksamuel.scrimage.nio.PngWriter
 import com.sksamuel.scrimage.nio.TiffWriter
 import com.sksamuel.scrimage.webp.WebpWriter
 import com.soufianodev.lingallery.app.Strings
+import java.awt.Color
+import java.awt.image.BufferedImage
 import java.io.FileOutputStream
 import java.nio.file.Files
 import java.nio.file.Path
@@ -25,7 +27,10 @@ object ImageEditor {
 
     fun crop(path: Path, x: Float, y: Float, width: Float, height: Float, destPath: Path? = null): Boolean {
         return try {
-            val img = ImmutableImage.loader().fromFile(path.toFile()).applyExifOrientation(path)
+            if (isSvgContent(path)) return false
+            val img = ImmutableImage.loader().fromFile(path.toFile())
+                .ensureAlphaARGB()
+                .applyExifOrientation(path)
             if (img.width <= 0 || img.height <= 0 || width <= 0f || height <= 0f) return false
             var left = kotlin.math.floor(x + 0.5f).toInt()
             var top = kotlin.math.floor(y + 0.5f).toInt()
@@ -44,9 +49,11 @@ object ImageEditor {
 
     fun rotate(path: Path, degrees: Int): Boolean {
         return try {
+            if (isSvgContent(path)) return false
             val img = ImmutableImage.loader().fromFile(path.toFile())
+                .ensureAlphaARGB()
                 .applyExifOrientation(path)
-                .rotate(Degrees(degrees))
+                .rotate(Degrees(degrees), Color(0, 0, 0, 0))
             val writer = writerForExtension(path) ?: return false
             writeWithFlush(img, writer, path.toFile())
         } catch (_: Exception) { false }
@@ -54,7 +61,9 @@ object ImageEditor {
 
     fun flipHorizontal(path: Path): Boolean {
         return try {
+            if (isSvgContent(path)) return false
             val img = ImmutableImage.loader().fromFile(path.toFile())
+                .ensureAlphaARGB()
                 .applyExifOrientation(path)
                 .flipX()
             val writer = writerForExtension(path) ?: return false
@@ -159,6 +168,32 @@ object ImageEditor {
         } catch (_: Exception) { false }
     }
 
+    private fun ImmutableImage.ensureAlphaARGB(): ImmutableImage {
+        val awt = this.awt()
+        if (awt.type == BufferedImage.TYPE_INT_ARGB ||
+            awt.type == BufferedImage.TYPE_INT_ARGB_PRE) return this
+        if (awt.colorModel.hasAlpha()) {
+            val argb = BufferedImage(awt.width, awt.height, BufferedImage.TYPE_INT_ARGB)
+            val g = argb.createGraphics()
+            g.drawImage(awt, 0, 0, null)
+            g.dispose()
+            return ImmutableImage.wrapAwt(argb)
+        }
+        return this
+    }
+
+    private fun isSvgContent(path: Path): Boolean {
+        return try {
+            if (path.fileName.toString().substringAfterLast('.').lowercase() == "svg") true
+            else {
+                Files.newBufferedReader(path).use {
+                    val line = it.readLine()?.trimStart()
+                    line != null && (line.startsWith("<svg") || line.startsWith("<?xml"))
+                }
+            }
+        } catch (_: Exception) { false }
+    }
+
     private fun ImmutableImage.applyExifOrientation(path: Path): ImmutableImage {
         return try {
             val metadata = ImageMetadataReader.readMetadata(path.toFile())
@@ -167,12 +202,12 @@ object ImageEditor {
             when (orientation) {
                 1 -> this
                 2 -> this.flipX()
-                3 -> this.rotate(Degrees(180))
+                3 -> this.rotate(Degrees(180), Color(0, 0, 0, 0))
                 4 -> this.flipY()
-                5 -> this.rotate(Degrees(90)).flipX()
-                6 -> this.rotate(Degrees(90))
-                7 -> this.rotate(Degrees(-90)).flipX()
-                8 -> this.rotate(Degrees(-90))
+                5 -> this.rotate(Degrees(90), Color(0, 0, 0, 0)).flipX()
+                6 -> this.rotate(Degrees(90), Color(0, 0, 0, 0))
+                7 -> this.rotate(Degrees(-90), Color(0, 0, 0, 0)).flipX()
+                8 -> this.rotate(Degrees(-90), Color(0, 0, 0, 0))
                 else -> this
             }
         } catch (_: Exception) { this }
