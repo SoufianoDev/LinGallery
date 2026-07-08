@@ -132,7 +132,7 @@ private class GalleryThumbnailController(
                 try {
                     val owned = thumbnailDecodeThrottle.withPermit {
                         withContext(Dispatchers.IO) {
-                            if (image.extension == ".svg") {
+                            if (image.extension.lowercase() == ".svg") {
                                 decodeSvgThumbnail(requestId, image.path, target, key)
                             } else {
                                 NativeImagePipeline.decodeThumbnail(

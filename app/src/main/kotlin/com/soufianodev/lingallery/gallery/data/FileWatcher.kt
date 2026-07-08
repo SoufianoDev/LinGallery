@@ -202,7 +202,7 @@ class FileWatcher(
     }
 
     private fun isSupportedImage(filename: Path): Boolean {
-        val ext = filename.extension
+        val ext = filename.extension.lowercase()
         return ".$ext" in supportedFormats
     }
 

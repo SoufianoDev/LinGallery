@@ -472,7 +472,7 @@ fun ViewerScreen(
                     slideOutVertically(tween(280, easing = FastOutSlowInEasing)) { it }
             ) {
                 EditToolbar(
-                    isEditableFormat = currentImage?.let { it.extension in AppConst.EDITABLE_FORMATS } ?: false,
+                    isEditableFormat = currentImage?.let { it.extension.lowercase() in AppConst.EDITABLE_FORMATS } ?: false,
                     onRotateLeft = { stateHolder.rotate(-90) { ok ->
                         if (!ok) onShowErrorSnackbar(Strings.Snackbar.rotateFailed)
                     }},
@@ -491,10 +491,10 @@ fun ViewerScreen(
                     },
                     onCopyClipboard = { stateHolder.copyImage { ok ->
                         if (ok) {
-                            val msg = if (currentImage?.extension == ".svg") Strings.Snackbar.svgCodeCopied else Strings.Snackbar.imageCopied
+                            val msg = if (currentImage?.extension?.lowercase() == ".svg") Strings.Snackbar.svgCodeCopied else Strings.Snackbar.imageCopied
                             onShowSnackbar(msg)
                         } else {
-                            val msg = if (currentImage?.extension == ".svg") Strings.Snackbar.svgCodeCopyFailed else Strings.Snackbar.copyFailed
+                            val msg = if (currentImage?.extension?.lowercase() == ".svg") Strings.Snackbar.svgCodeCopyFailed else Strings.Snackbar.copyFailed
                             onShowErrorSnackbar(msg)
                         }
                     }},
@@ -512,7 +512,7 @@ fun ViewerScreen(
                     onInfo = { showExifInfo() },
                     onDelete = { deleteCurrentImage() },
                     isDark = isDark,
-                    isSvg = currentImage?.extension == ".svg",
+                    isSvg = currentImage?.extension?.lowercase() == ".svg",
                 )
             }
         }

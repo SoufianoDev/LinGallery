@@ -120,7 +120,7 @@ class ViewerStateHolder(
     fun enter(images: List<ImageFile>, index: Int) {
         releaseSvg()
         val img = images.getOrNull(index)
-        if (img != null && img.extension == ".svg") {
+        if (img != null && img.extension.lowercase() == ".svg") {
             loadSvgDocument(img.path)
         }
         _uiState.value = _uiState.value.copy(
@@ -135,7 +135,7 @@ class ViewerStateHolder(
         if (newIndex != s.currentIndex) {
             releaseSvg()
             val img = s.images.getOrNull(newIndex)
-            if (img != null && img.extension == ".svg") {
+            if (img != null && img.extension.lowercase() == ".svg") {
                 loadSvgDocument(img.path)
             }
             _uiState.value = _uiState.value.copy(currentIndex = newIndex, panX = 0f, panY = 0f)
@@ -201,7 +201,7 @@ class ViewerStateHolder(
     }
 
     private suspend fun persistEdit(path: Path, extension: String): Boolean {
-        return if (extension == ".svg") {
+        return if (extension.lowercase() == ".svg") {
             val handle = _uiState.value.svgDocumentHandle
             if (handle >= 0L) {
                 val saved = withContext(Dispatchers.IO) {
@@ -222,7 +222,7 @@ class ViewerStateHolder(
     fun rotate(degrees: Int, onResult: (Boolean) -> Unit = {}) {
         val image = _uiState.value.currentImage ?: return
         scope.launch {
-            val ok = if (image.extension == ".svg") {
+            val ok = if (image.extension.lowercase() == ".svg") {
                 val handle = _uiState.value.svgDocumentHandle
                 if (handle < 0L) false
                 else {
@@ -243,7 +243,7 @@ class ViewerStateHolder(
     fun flip(onResult: (Boolean) -> Unit = {}) {
         val image = _uiState.value.currentImage ?: return
         scope.launch {
-            val ok = if (image.extension == ".svg") {
+            val ok = if (image.extension.lowercase() == ".svg") {
                 val handle = _uiState.value.svgDocumentHandle
                 if (handle < 0L) false
                 else {
@@ -267,7 +267,7 @@ class ViewerStateHolder(
         val image = s.currentImage ?: return
         if (!rect.isValid()) return
         scope.launch {
-            val ok = if (image.extension == ".svg") {
+            val ok = if (image.extension.lowercase() == ".svg") {
                 val handle = _uiState.value.svgDocumentHandle
                 if (handle < 0L) false
                 else {
@@ -286,7 +286,7 @@ class ViewerStateHolder(
             if (ok) {
                 refreshCurrentImage()
                 _uiState.value = _uiState.value.copy(
-                    svgEditVersion = if (image.extension == ".svg") _uiState.value.svgEditVersion + 1 else _uiState.value.svgEditVersion,
+                    svgEditVersion = if (image.extension.lowercase() == ".svg") _uiState.value.svgEditVersion + 1 else _uiState.value.svgEditVersion,
                     isCropping = false, cropRect = null,
                     scale = 1f, panX = 0f, panY = 0f
                 )
@@ -327,7 +327,7 @@ class ViewerStateHolder(
     fun copyImage(onResult: (Boolean) -> Unit = {}) {
         scope.launch {
             val image = _uiState.value.currentImage ?: return@launch
-            if (image.extension == ".svg") {
+            if (image.extension.lowercase() == ".svg") {
                 val content = withContext(Dispatchers.IO) {
                     try { java.nio.file.Files.readString(image.path) }
                     catch (_: Exception) { null }
@@ -423,7 +423,7 @@ class ViewerStateHolder(
         val image = s.currentImage ?: return
         if (!rect.isValid()) return
         scope.launch {
-            if (image.extension == ".svg") {
+            if (image.extension.lowercase() == ".svg") {
                 val handle = _uiState.value.svgDocumentHandle
                 if (handle < 0L) { onResult(false); return@launch }
                 // Apply the crop to the in-memory document before saving.
@@ -473,7 +473,7 @@ class ViewerStateHolder(
             } else {
                 val parent = image.path.parent
                 val stem = image.name.substringBeforeLast('.')
-                val ext = image.name.substringAfterLast('.', "png")
+                val ext = image.name.substringAfterLast('.', "png").lowercase()
                 val dest = uniqueDestination(parent.resolve("${stem}_cropped.$ext"))
                 val ok = withContext(Dispatchers.IO) {
                     ImageEditor.crop(image.path, rect.x, rect.y, rect.width, rect.height, dest)
@@ -586,7 +586,7 @@ class ViewerStateHolder(
 
     fun saveSvgAsCopy(onResult: (Boolean) -> Unit) {
         val image = _uiState.value.currentImage ?: return
-        if (image.extension != ".svg") { onResult(false); return }
+        if (image.extension.lowercase() != ".svg") { onResult(false); return }
         val handle = _uiState.value.svgDocumentHandle
         if (handle < 0L) { onResult(false); return }
         scope.launch {
@@ -623,7 +623,7 @@ class ViewerStateHolder(
 
     fun overwriteSvg(onResult: (Boolean) -> Unit) {
         val image = _uiState.value.currentImage ?: return
-        if (image.extension != ".svg") { onResult(false); return }
+        if (image.extension.lowercase() != ".svg") { onResult(false); return }
         val handle = _uiState.value.svgDocumentHandle
         if (handle < 0L) { onResult(false); return }
         scope.launch {
