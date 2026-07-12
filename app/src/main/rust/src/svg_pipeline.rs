@@ -10,7 +10,7 @@ use once_cell::sync::Lazy;
 
 use crate::lin_log;
 
-// ── Document Registry ────────────────────────────────────────────
+/* Document Registry */
 
 static NEXT_DOC_ID: AtomicI64 = AtomicI64::new(1);
 static DOCUMENTS: Lazy<Mutex<HashMap<i64, SvgDocument>>> = Lazy::new(|| Mutex::new(HashMap::new()));
@@ -22,6 +22,28 @@ struct SvgDocument {
     original_size: (f32, f32),
 }
 
+#[derive(Debug, Clone, Copy)]
+struct BBox {
+    x: f32,
+    y: f32,
+    width: f32,
+    height: f32,
+}
+
+impl BBox {
+    fn center(self) -> (f32, f32) {
+        (self.x + self.width / 2.0, self.y + self.height / 2.0)
+    }
+
+    fn union(self, other: BBox) -> BBox {
+        let x = self.x.min(other.x);
+        let y = self.y.min(other.y);
+        let max_x = (self.x + self.width).max(other.x + other.width);
+        let max_y = (self.y + self.height).max(other.y + other.height);
+        BBox { x, y, width: max_x - x, height: max_y - y }
+    }
+}
+
 fn next_doc_id() -> i64 {
     NEXT_DOC_ID.fetch_add(1, Ordering::SeqCst)
 }
@@ -31,15 +53,16 @@ fn parse_svg(source: &str) -> Option<(usvg::Tree, (f32, f32))> {
     let tree = usvg::Tree::from_data(source.as_bytes(), &opt).ok()?;
     let svg_w = tree.size().width();
     let svg_h = tree.size().height();
-    // usvg normally resolves size from viewBox when width/height are absent.
-    // tree.size() already accounts for the viewBox, so this fallback is only
-    // reached for truly degenerate SVGs (no size, no viewBox).
+
+    /* usvg normally resolves size from viewBox when width/height are absent.
+     tree.size() already accounts for the viewBox, so this fallback is only
+     reached for truly degenerate SVGs (no size, no viewBox). */
     let ow = if svg_w > 0.0 { svg_w } else { 300.0 };
     let oh = if svg_h > 0.0 { svg_h } else { 150.0 };
     Some((tree, (ow, oh)))
 }
 
-// ── Internal Helpers ─────────────────────────────────────────────
+/* Internal Helpers */
 
 fn render_to_pixmap(doc: &SvgDocument, width: u32, height: u32) -> Option<Vec<u8>> {
     let svg_w = doc.original_size.0;
@@ -50,8 +73,8 @@ fn render_to_pixmap(doc: &SvgDocument, width: u32, height: u32) -> Option<Vec<u8
         return None;
     }
 
-    // Compute a uniform fit-scale so the SVG fills (width, height) without distortion.
-    // This mirrors the fitScale logic in ImageDisplayContent on the Kotlin side.
+    /* Compute a uniform fit-scale so the SVG fills (width, height) without distortion.
+     This mirrors the fitScale logic in ImageDisplayContent on the Kotlin side. */
     let scale_x = width.max(1) as f32 / svg_w;
     let scale_y = height.max(1) as f32 / svg_h;
     let scale   = scale_x.min(scale_y);
@@ -68,12 +91,12 @@ fn render_to_pixmap(doc: &SvgDocument, width: u32, height: u32) -> Option<Vec<u8
 
     let pixels = pixmap.data();
 
-    // Header layout (matches NativeImagePipeline.parseResult / HEADER_BYTES = 16):
-    //   bytes  0-3  : decoded_width  (i32 LE) = actual pixel width of this bitmap
-    //   bytes  4-7  : decoded_height (i32 LE) = actual pixel height of this bitmap
-    //   bytes  8-11 : source_width   (f32 LE) = SVG intrinsic width  (used for aspect-ratio)
-    //   bytes 12-15 : source_height  (f32 LE) = SVG intrinsic height (used for aspect-ratio)
-    //   bytes 16+   : raw RGBA pixels
+    /* Header layout (matches NativeImagePipeline.parseResult / HEADER_BYTES = 16):
+       bytes  0-3  : decoded_width  (i32 LE) = actual pixel width of this bitmap
+       bytes  4-7  : decoded_height (i32 LE) = actual pixel height of this bitmap
+       bytes  8-11 : source_width   (f32 LE) = SVG intrinsic width  (used for aspect-ratio)
+       bytes 12-15 : source_height  (f32 LE) = SVG intrinsic height (used for aspect-ratio)
+       bytes 16+   : raw RGBA pixels */
     let mut output = Vec::with_capacity(16 + pixels.len());
     output.extend_from_slice(&(render_w as i32).to_le_bytes());
     output.extend_from_slice(&(render_h as i32).to_le_bytes());
@@ -189,7 +212,7 @@ fn modify_viewbox_in_source(
     ph: f32,
 ) -> String {
     let mut result = source.to_string();
-    let new_vb = format!("viewBox=\"{:.1} {:.1} {:.1} {:.1}\"", vx, vy, vw, vh);
+    let new_vb = format!("viewBox=\"{:.6} {:.6} {:.6} {:.6}\"", vx, vy, vw, vh);
 
     if !has_viewbox_attr(&result) {
         if let Some(pos) = find_svg_tag_insert_pos(&result) {
@@ -331,7 +354,7 @@ fn add_clip_path_to_source(source: &str, x: f32, y: f32, w: f32, h: f32) -> Stri
     // Insert a <defs> with <clipPath> into the SVG, and wrap the root children in a group
     // with clip-path="url(#_lingallery_crop)"
     let clip_def = format!(
-        "<defs><clipPath id=\"_lingallery_crop\"><rect x=\"{:.1}\" y=\"{:.1}\" width=\"{:.1}\" height=\"{:.1}\"/></clipPath></defs>",
+        "<defs><clipPath id=\"_lingallery_crop\"><rect x=\"{:.6}\" y=\"{:.6}\" width=\"{:.6}\" height=\"{:.6}\"/></clipPath></defs>",
         x, y, w, h
     );
 
@@ -423,7 +446,143 @@ fn parse_preserve_aspect_ratio(tag_content: &str) -> (bool, bool, f32, f32) {
     (false, is_slice, align_x, align_y)
 }
 
-// ── JNI Exports ──────────────────────────────────────────────────
+fn compute_content_bbox(node: &usvg::Node) -> Option<BBox> {
+    match node {
+        usvg::Node::Group(g) => compute_content_bbox_group(g),
+        _ => {
+            let bbox = node.abs_layer_bounding_box()?;
+            if bbox.width() > 0.0
+                && bbox.height() > 0.0
+                && bbox.x().is_finite()
+                && bbox.y().is_finite()
+            {
+                Some(BBox {
+                    x: bbox.x(),
+                    y: bbox.y(),
+                    width: bbox.width(),
+                    height: bbox.height(),
+                })
+            } else {
+                None
+            }
+        }
+    }
+}
+
+fn compute_content_bbox_group(group: &usvg::Group) -> Option<BBox> {
+    let mut union_bbox: Option<BBox> = None;
+    for child in group.children() {
+        if let Some(child_bbox) = compute_content_bbox(child) {
+            union_bbox = Some(match union_bbox {
+                Some(prev) => prev.union(child_bbox),
+                None => child_bbox,
+            });
+        }
+    }
+    union_bbox
+}
+
+fn svg_rotation_pivot(tree: &usvg::Tree, vx: f32, vy: f32, vw: f32, vh: f32) -> (f32, f32) {
+    let fallback = (vx + vw / 2.0, vy + vh / 2.0);
+    match compute_content_bbox_group(tree.root()) {
+        Some(bbox) => {
+            let (cx, cy) = bbox.center();
+            (cx, cy)
+        }
+        None => fallback,
+    }
+}
+
+fn rotation_pivot_in_viewbox_coordinates(
+    doc: &SvgDocument,
+    tag_content: &str,
+    vx: f32,
+    vy: f32,
+    vw: f32,
+    vh: f32,
+) -> (f32, f32) {
+    let fallback = (vx + vw / 2.0, vy + vh / 2.0);
+    if compute_content_bbox_group(doc.tree.root()).is_none() {
+        return fallback;
+    }
+
+    // usvg reports root bounds in rendered canvas coordinates, but the injected
+    // <g> transform is evaluated in viewBox coordinates. Convert the pivot back
+    // through the current viewport mapping before serializing it.
+    let (rendered_cx, rendered_cy) = svg_rotation_pivot(&doc.tree, vx, vy, vw, vh);
+    let svg_w = doc.original_size.0;
+    let svg_h = doc.original_size.1;
+    if svg_w <= 0.0 || svg_h <= 0.0 || vw <= 0.0 || vh <= 0.0 {
+        return fallback;
+    }
+
+    let (is_none, is_slice, align_x, align_y) = parse_preserve_aspect_ratio(tag_content);
+    if is_none {
+        return (
+            vx + rendered_cx * vw / svg_w,
+            vy + rendered_cy * vh / svg_h,
+        );
+    }
+
+    let scale_x = svg_w / vw;
+    let scale_y = svg_h / vh;
+    let scale = if is_slice {
+        scale_x.max(scale_y)
+    } else {
+        scale_x.min(scale_y)
+    };
+    if !scale.is_finite() || scale <= 0.0 {
+        return fallback;
+    }
+
+    let offset_x = (svg_w - vw * scale) * align_x;
+    let offset_y = (svg_h - vh * scale) * align_y;
+    (
+        vx + (rendered_cx - offset_x) / scale,
+        vy + (rendered_cy - offset_y) / scale,
+    )
+}
+
+fn make_rotate_transform(angle_deg: f32, cx: f32, cy: f32) -> String {
+    format!("rotate({:.6} {:.6} {:.6})", angle_deg, cx, cy)
+}
+
+fn rotate_document(doc: &mut SvgDocument, degrees: f32) -> bool {
+    let tag_content = if let Some(end) = find_svg_open_end(&doc.source) {
+        &doc.source[..end + 1]
+    } else {
+        ""
+    };
+
+    let (vx, vy, vw, vh) = parse_attrib_viewbox(tag_content)
+        .unwrap_or((0.0, 0.0, doc.original_size.0, doc.original_size.1));
+
+    let (cx, cy) = rotation_pivot_in_viewbox_coordinates(doc, tag_content, vx, vy, vw, vh);
+    let transform_str = make_rotate_transform(degrees, cx, cy);
+    let mut new_source = apply_transform_to_source(&doc.source, &transform_str);
+
+    // If 90 or 270 degrees, swap width and height of viewBox and physical size.
+    // The adjusted viewBox remains centered on the visible artwork pivot.
+    if (degrees % 180.0).abs() > 0.1 {
+        let new_vw = vh;
+        let new_vh = vw;
+        let new_vx = cx - new_vw / 2.0;
+        let new_vy = cy - new_vh / 2.0;
+        new_source = modify_viewbox_in_source(
+            &new_source,
+            new_vx,
+            new_vy,
+            new_vw,
+            new_vh,
+            doc.original_size.1,
+            doc.original_size.0,
+        );
+    }
+
+    replace_document(doc, new_source)
+}
+
+/* JNI Exports */
 
 #[no_mangle]
 pub extern "system" fn Java_com_soufianodev_lingallery_native_NativeSvgPipeline_nativeSvgLoad(
@@ -628,7 +787,7 @@ pub extern "system" fn Java_com_soufianodev_lingallery_native_NativeSvgPipeline_
     }
 }
 
-// ── Editing Operations ───────────────────────────────────────────
+/* Editing Operations */
 
 #[no_mangle]
 pub extern "system" fn Java_com_soufianodev_lingallery_native_NativeSvgPipeline_nativeSvgEditRotate(
@@ -646,30 +805,7 @@ pub extern "system" fn Java_com_soufianodev_lingallery_native_NativeSvgPipeline_
         None => return JNI_FALSE,
     };
 
-    let tag_content = if let Some(end) = find_svg_open_end(&doc.source) {
-        &doc.source[..end + 1]
-    } else {
-        ""
-    };
-
-    let (vx, vy, vw, vh) = parse_attrib_viewbox(tag_content)
-        .unwrap_or((0.0, 0.0, doc.original_size.0, doc.original_size.1));
-
-    let cx = vx + vw / 2.0;
-    let cy = vy + vh / 2.0;
-    let transform_str = format!("rotate({:.1} {:.1} {:.1})", degrees, cx, cy);
-    let mut new_source = apply_transform_to_source(&doc.source, &transform_str);
-
-    // If 90 or 270 degrees, swap width and height of viewBox and physical size
-    if (degrees % 180.0).abs() > 0.1 {
-        let new_vw = vh;
-        let new_vh = vw;
-        let new_vx = cx - new_vw / 2.0;
-        let new_vy = cy - new_vh / 2.0;
-        new_source = modify_viewbox_in_source(&new_source, new_vx, new_vy, new_vw, new_vh, doc.original_size.1, doc.original_size.0);
-    }
-
-    if replace_document(doc, new_source) {
+    if rotate_document(doc, degrees) {
         JNI_TRUE
     } else {
         JNI_FALSE
@@ -701,7 +837,7 @@ pub extern "system" fn Java_com_soufianodev_lingallery_native_NativeSvgPipeline_
         .unwrap_or((0.0, 0.0, doc.original_size.0, doc.original_size.1));
 
     let cx = vx + vw / 2.0;
-    let transform_str = format!("translate({:.1},0) scale(-1,1)", cx * 2.0);
+    let transform_str = format!("translate({:.6},0) scale(-1,1)", cx * 2.0);
     let new_source = apply_transform_to_source(&doc.source, &transform_str);
 
     if replace_document(doc, new_source) {
@@ -736,7 +872,7 @@ pub extern "system" fn Java_com_soufianodev_lingallery_native_NativeSvgPipeline_
         .unwrap_or((0.0, 0.0, doc.original_size.0, doc.original_size.1));
 
     let cy = vy + vh / 2.0;
-    let transform_str = format!("translate(0,{:.1}) scale(1,-1)", cy * 2.0);
+    let transform_str = format!("translate(0,{:.6}) scale(1,-1)", cy * 2.0);
     let new_source = apply_transform_to_source(&doc.source, &transform_str);
 
     if replace_document(doc, new_source) {
@@ -833,6 +969,15 @@ pub extern "system" fn Java_com_soufianodev_lingallery_native_NativeSvgPipeline_
 mod tests {
     use super::*;
 
+    fn document_from_source(source: &str) -> SvgDocument {
+        let (tree, original_size) = parse_svg(source).unwrap();
+        SvgDocument {
+            tree,
+            source: source.to_string(),
+            original_size,
+        }
+    }
+
     #[test]
     fn test_crop_svg_with_newlines() {
         let source = r#"<?xml version="1.0" encoding="UTF-8" standalone="no"?>
@@ -859,5 +1004,89 @@ mod tests {
         let new_source = modify_viewbox_in_source(source, 0.0, 0.0, 300.0, 300.0, 400.0, 400.0);
         let parsed = parse_svg(&new_source);
         assert!(parsed.is_some(), "Should parse modified source");
+    }
+
+    #[test]
+    fn compute_bbox_from_visible_leaf_nodes() {
+        let source = r#"<svg width="200" height="200" viewBox="0 0 200 200">
+  <defs>
+    <clipPath id="c">
+      <rect x="0" y="0" width="200" height="200"/>
+    </clipPath>
+  </defs>
+  <rect x="20" y="40" width="100" height="60" fill="red"/>
+</svg>"#;
+        let doc = document_from_source(source);
+        let bbox = compute_content_bbox_group(doc.tree.root()).unwrap();
+        assert_eq!(bbox.x, 20.0);
+        assert_eq!(bbox.y, 40.0);
+        assert_eq!(bbox.width, 100.0);
+        assert_eq!(bbox.height, 60.0);
+    }
+
+    #[test]
+    fn compute_bbox_ignores_hidden_non_rendering_elements() {
+        let source = r#"<svg width="200" height="200" viewBox="0 0 200 200">
+  <clipPath id="c"><rect x="0" y="0" width="200" height="200"/></clipPath>
+  <path d="M 30 40 H 80" fill="none"/>
+</svg>"#;
+        let doc = document_from_source(source);
+        assert!(compute_content_bbox_group(doc.tree.root()).is_none());
+    }
+
+    #[test]
+    fn pivot_from_offset_artwork_bounds() {
+        let source = r#"<svg width="200" height="200" viewBox="0 0 200 200"><rect x="20" y="40" width="100" height="60"/></svg>"#;
+        let doc = document_from_source(source);
+        assert_eq!(svg_rotation_pivot(&doc.tree, 0.0, 0.0, 200.0, 200.0), (70.0, 70.0));
+    }
+
+    #[test]
+    fn pivot_falls_back_for_empty_or_degenerate_artwork() {
+        let empty = document_from_source(r#"<svg width="200" height="100" viewBox="10 20 200 100"/>"#);
+        assert_eq!(svg_rotation_pivot(&empty.tree, 10.0, 20.0, 200.0, 100.0), (110.0, 70.0));
+
+        let degenerate = document_from_source(
+            r#"<svg width="200" height="100" viewBox="10 20 200 100"><path d="M 30 40 H 80" fill="none"/></svg>"#,
+        );
+        assert_eq!(svg_rotation_pivot(&degenerate.tree, 10.0, 20.0, 200.0, 100.0), (110.0, 70.0));
+    }
+
+    #[test]
+    fn right_angle_rotation_swaps_dimensions_around_artwork_pivot() {
+        let mut doc = document_from_source(
+            r#"<svg width="200" height="100" viewBox="0 0 200 100"><rect x="20" y="20" width="80" height="40"/></svg>"#,
+        );
+
+        assert!(rotate_document(&mut doc, 90.0));
+        assert!(parse_svg(&doc.source).is_some(), "Rotated SVG must remain valid");
+        assert!(doc.source.contains("rotate(90.000000 60.000000 40.000000)"));
+
+        let open_end = find_svg_open_end(&doc.source).unwrap();
+        let tag_content = &doc.source[..open_end + 1];
+        assert_eq!(parse_attrib_viewbox(tag_content), Some((10.0, -60.0, 100.0, 200.0)));
+        assert_eq!(parse_attrib_float(tag_content, "width"), Some(100.0));
+        assert_eq!(parse_attrib_float(tag_content, "height"), Some(200.0));
+    }
+
+    #[test]
+    fn repeated_rotations_use_bounds_from_the_current_tree() {
+        let mut doc = document_from_source(
+            r#"<svg width="240" height="120" viewBox="0 0 240 120"><rect x="20" y="30" width="80" height="40"/></svg>"#,
+        );
+
+        assert!(rotate_document(&mut doc, 90.0));
+        let open_end = find_svg_open_end(&doc.source).unwrap();
+        let tag_content = &doc.source[..open_end + 1];
+        let (vx, vy, vw, vh) = parse_attrib_viewbox(tag_content).unwrap();
+        let rendered_pivot = svg_rotation_pivot(&doc.tree, vx, vy, vw, vh);
+        let (cx, cy) = rotation_pivot_in_viewbox_coordinates(&doc, tag_content, vx, vy, vw, vh);
+        assert_eq!(rendered_pivot, (60.0, 120.0));
+        assert_eq!((cx, cy), (60.0, 50.0));
+
+        assert!(rotate_document(&mut doc, 90.0));
+        let expected = format!("rotate(90.000000 {:.6} {:.6})", cx, cy);
+        assert!(doc.source.contains(&expected));
+        assert!(parse_svg(&doc.source).is_some(), "Accumulated rotations must remain valid");
     }
 }

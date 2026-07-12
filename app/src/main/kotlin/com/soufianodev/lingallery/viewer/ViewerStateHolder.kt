@@ -239,8 +239,20 @@ class ViewerStateHolder(
                 withContext(Dispatchers.IO) { ImageEditor.rotate(image.path, degrees) }
             }
             if (ok) {
-                persistEdit(image.path, image.extension)
-                resetView()
+                if (image.extension.lowercase() == ".svg") {
+                    val newSize = NativeSvgPipeline.getSize(_uiState.value.svgDocumentHandle)
+                    _uiState.value = _uiState.value.copy(
+                        svgSourceWidth = newSize?.width ?: 0f,
+                        svgSourceHeight = newSize?.height ?: 0f,
+                        scale = 1f,
+                        panX = 0f,
+                        panY = 0f,
+                    )
+                    persistEdit(image.path, image.extension)
+                } else {
+                    persistEdit(image.path, image.extension)
+                    resetView()
+                }
             }
             onResult(ok)
             }
