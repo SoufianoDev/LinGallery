@@ -9,8 +9,6 @@ import java.nio.ByteBuffer
 import java.nio.ByteOrder
 import java.nio.file.Path
 import java.util.concurrent.atomic.AtomicLong
-import kotlin.math.ceil
-import kotlin.math.max
 
 data class DecodedImageDto(
     val requestId: Long,
@@ -98,12 +96,12 @@ object NativeImagePipeline {
         lastModified: Long,
         viewportWidthPx: Int,
         viewportHeightPx: Int,
-        zoomScale: Float,
     ): DecodedImageDto? {
         if (!NativeLibLoader.isAvailable) return null
-        val bucket = decodeBucket(zoomScale)
-        val targetWidth = ceil(viewportWidthPx.coerceAtLeast(1) * bucket).toInt()
-        val targetHeight = ceil(viewportHeightPx.coerceAtLeast(1) * bucket).toInt()
+        // ponytail: single decode at viewport size, GPU upscales on zoom (soft above ~4x).
+        // Upgrade path: reintroduce bucket capped at 2x if sharpness complaints measured.
+        val targetWidth = viewportWidthPx.coerceAtLeast(1)
+        val targetHeight = viewportHeightPx.coerceAtLeast(1)
         val bytes = nativeDecodeViewer(
             requestId,
             path.toAbsolutePath().normalize().toString(),
@@ -123,17 +121,6 @@ object NativeImagePipeline {
 
     fun trim() {
         if (NativeLibLoader.isAvailable) nativeTrim()
-    }
-
-    internal fun decodeBucket(zoomScale: Float): Float {
-        val demand = max(1f, zoomScale)
-        return when {
-            demand <= 1.25f -> 1f
-            demand <= 1.75f -> 1.5f
-            demand <= 2.5f -> 2f
-            demand <= 3.5f -> 3f
-            else -> 4f
-        }
     }
 
     internal fun parseResult(

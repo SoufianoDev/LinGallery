@@ -37,6 +37,7 @@ import com.soufianodev.lingallery.ui.icons.AppIcons
 import com.soufianodev.lingallery.model.ImageFile
 import com.soufianodev.lingallery.native.MemoryManager
 import com.soufianodev.lingallery.native.ImagePipelineRole
+import com.soufianodev.lingallery.native.LinLogger
 import com.soufianodev.lingallery.native.NativeImagePipeline
 import com.soufianodev.lingallery.native.NativeSvgPipeline
 import com.soufianodev.lingallery.native.OwnedSkiaImage
@@ -83,12 +84,10 @@ fun ImageDisplay(
     val memoryPressure by MemoryManager.pressureLevel.collectAsState()
 
     var lastDecodePath by remember { mutableStateOf<Path?>(null) }
-    var lastDecodeBucket by remember { mutableFloatStateOf(0f) }
     var lastImageLastModified by remember { mutableLongStateOf(0L) }
 
     // SVG-specific deduplication state
     var lastSvgHandle by remember { mutableLongStateOf(-1L) }
-    var lastSvgBucket by remember { mutableFloatStateOf(0f) }
     var lastSvgVersion by remember { mutableIntStateOf(-1) }
 
     LaunchedEffect(memoryPressure) {
@@ -99,7 +98,6 @@ fun ImageDisplay(
     }
 
     var latestRequestId by remember { mutableLongStateOf(0L) }
-    val decodeBucket = remember(scale) { NativeImagePipeline.decodeBucket(scale) }
 
     val isSvg = path?.extension?.lowercase() == "svg"
 
@@ -112,18 +110,17 @@ fun ImageDisplay(
     }
 
     LaunchedEffect(
-        path, imageLastModified, viewportWidth, viewportHeight, decodeBucket, svgEditVersion
+        path, imageLastModified, viewportWidth, viewportHeight, svgDocumentHandle, svgEditVersion
     ) {
         if (!isSvg) {
-            if (path == lastDecodePath && decodeBucket <= lastDecodeBucket
+            if (path == lastDecodePath
                 && imageLastModified == lastImageLastModified
                 && currentImage != null && !currentImage!!.isClosed) {
                 return@LaunchedEffect
             }
         } else {
-            // Skip SVG re-render if the handle, zoom bucket, and edit version are all unchanged.
+            // Skip SVG re-render if the handle and edit version are unchanged.
             if (svgDocumentHandle == lastSvgHandle
-                && decodeBucket == lastSvgBucket
                 && svgEditVersion == lastSvgVersion
                 && currentImage != null && !currentImage!!.isClosed) {
                 return@LaunchedEffect
@@ -138,10 +135,8 @@ fun ImageDisplay(
         }
 
         lastDecodePath = path
-        lastDecodeBucket = decodeBucket
         lastImageLastModified = imageLastModified
         lastSvgHandle = svgDocumentHandle
-        lastSvgBucket = decodeBucket
         lastSvgVersion = svgEditVersion
 
         val requestId = NativeImagePipeline.nextRequestId()
@@ -154,20 +149,26 @@ fun ImageDisplay(
         }
 
         try {
-            val owned = if (isSvg && svgDocumentHandle >= 0L) {
+            /* What crosses the withContext boundary is a DecodedImageDto — plain JVM data —
+               and NOT an OwnedSkiaImage. This matters: withContext discards its return value
+               and throws CancellationException when the job is cancelled while the block runs,
+               so anything constructed inside it can become unreachable without ever being
+               handed back. A dropped dto is ordinary garbage; a dropped OwnedSkiaImage strands
+               a full-size native Skia buffer that only a later GC + Cleaner can free, which is
+               how zooming an SVG used to accumulate gigabytes of native memory. */
+            val dto = if (isSvg && svgDocumentHandle >= 0L) {
                 withContext(Dispatchers.IO) {
-                    val bucket = NativeImagePipeline.decodeBucket(scale)
-                    val renderW = (kotlin.math.ceil(viewportWidth * bucket).toInt()).coerceAtLeast(1)
-                    val renderH = (kotlin.math.ceil(viewportHeight * bucket).toInt()).coerceAtLeast(1)
+                    val renderW = viewportWidth.coerceAtLeast(1)
+                    val renderH = viewportHeight.coerceAtLeast(1)
                     val bytes = NativeSvgPipeline.render(
-                        svgDocumentHandle, renderW, renderH
+                        svgDocumentHandle, renderW, renderH, requestId
                     ) ?: return@withContext null
                     NativeImagePipeline.parseResult(
                         requestId,
                         "${path}_svg_v${svgEditVersion}",
                         ImagePipelineRole.SVG_VIEWER,
                         bytes
-                    )?.toOwnedImage()
+                    )
                 }
             } else {
                 withContext(Dispatchers.IO) {
@@ -177,22 +178,35 @@ fun ImageDisplay(
                         lastModified = imageLastModified,
                         viewportWidthPx = viewportWidth,
                         viewportHeightPx = viewportHeight,
-                        zoomScale = scale,
-                    )?.toOwnedImage()
+                    )
                 }
             }
+
+            // Staleness is settled before any native allocation happens.
             if (!isActive || latestRequestId != requestId) {
-                owned?.close()
                 return@LaunchedEffect
             }
-            if (owned != null) {
-                currentImage?.close()
-                currentImage = owned
-                MemoryManager.requestSkiaCleanup()
-                loadError = false
-            } else {
+            if (dto == null) {
                 loadError = true
+                return@LaunchedEffect
             }
+
+            /* toOwnedImage() is the only step that allocates native Skia memory, so it runs
+               here — on a path where its result is always reachable and always closeable. */
+            val previous = currentImage
+            currentImage = dto.toOwnedImage()
+            LinLogger.d(
+                "ImageDisplay",
+                "image installed: ${dto.decodedWidth}x${dto.decodedHeight} (${dto.pixels.size} bytes)" +
+                    if (previous != null) ", closing previous ${previous.byteCount} bytes" else ""
+            )
+            /* Closed after the new one is installed, never before: that way `currentImage` is
+               never observably pointing at a closed image, so no draw can pick up a freed
+               buffer. Peak is unchanged either way — nothing suspends between these two
+               statements — and the real peak reduction comes from the Rust side. */
+            previous?.close()
+            MemoryManager.requestSkiaCleanup()
+            loadError = false
         } catch (_: CancellationException) {
             NativeImagePipeline.cancel(requestId)
         } catch (_: Exception) {
