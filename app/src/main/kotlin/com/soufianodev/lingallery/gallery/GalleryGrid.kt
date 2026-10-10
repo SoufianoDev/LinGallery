@@ -119,6 +119,9 @@ private class GalleryThumbnailController(
 
         val staleKeys = (images.keys + jobs.keys + generations.keys).filter { it !in activeKeys }
         staleKeys.forEach(::evict)
+        // ponytail: one deferred GPU cleanup per scroll frame, not per thumb (reflection walk).
+        // Upgrade path: drop entirely if profiler shows Main jank on fast scroll.
+        if (staleKeys.isNotEmpty()) MemoryManager.requestSkiaCleanup()
 
         val target = cellSizePx.coerceIn(1, MAX_THUMBNAIL_EDGE_PX)
         activeKeys.take(MAX_THUMBNAILS).forEach { key ->
@@ -168,7 +171,6 @@ private class GalleryThumbnailController(
         requestIds.remove(key)?.let(NativeImagePipeline::cancel)
         jobs.remove(key)?.cancel()
         images.remove(key)?.close()
-        MemoryManager.requestSkiaCleanup()
     }
 
     fun closeAll() {
