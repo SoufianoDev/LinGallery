@@ -100,6 +100,18 @@ tasks.named("classes") {
     dependsOn(compileRust)
 }
 
+// ponytail: bundle the Rust .so inside the app jar so packaged Deb/Rpm/AppImage
+// work off-machine (dev `run` still uses jniLibs via java.library.path).
+// Upgrade path: appResourcesRootDir + compose.application.resources.dir (per docs)
+// if jar bloat or /tmp extract cost ever matters.
+tasks.named<Copy>("processResources") {
+    dependsOn(compileRust)
+    from(layout.projectDirectory.dir("src/main/jniLibs")) {
+        include("*.so")
+        into("native")
+    }
+}
+
 tasks.named("clean") {
     delete("src/main/jniLibs", "src/main/rust/target")
 }
@@ -156,7 +168,9 @@ compose.desktop {
             packageName = "com.soufianodev.lingallery"
             packageVersion = "1.0.0"
             linux {
-                modules("jdk.security.auth")
+                // ponytail: java.sql for sqlite-jdbc cache (jlink strips it by default).
+                // Add modules here only on NoClassDefFoundError evidence, not preemptively.
+                modules("jdk.security.auth", "java.sql")
             }
         }
 
