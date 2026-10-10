@@ -53,13 +53,11 @@ fun GalleryScreen(
                 currentAlbumIndex = state.currentAlbumIndex,
                 onAlbumSelected = { index ->
                     val prevAlbum = state.albums.getOrNull(state.currentAlbumIndex)
-                    if (prevAlbum?.isDeviceAlbum == true) {
-                        if (prevAlbum.path in state.pendingPhoneSort) {
-                            stateHolder.updateState { it.sortPhoneByRecent(prevAlbum.path) }
-                        }
-                        SingletonSketch.get(PlatformContext.INSTANCE).memoryCache.clear()
-                        org.jetbrains.skia.Graphics.purgeResourceCache()
+                    if (prevAlbum?.isDeviceAlbum == true && prevAlbum.path in state.pendingPhoneSort) {
+                        stateHolder.updateState { it.sortPhoneByRecent(prevAlbum.path) }
                     }
+                    SingletonSketch.get(PlatformContext.INSTANCE).memoryCache.clear()
+                    org.jetbrains.skia.Graphics.purgeResourceCache()
                     stateHolder.onAction(GalleryAction.SelectAlbum(index))
                 },
                 isDark = isDark,
